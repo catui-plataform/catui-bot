@@ -1,0 +1,30 @@
+{
+  "pcsx2": [
+    {"layer": "native", "command": ["{python}", "validation/core_native.py", "--core", "pcsx2", "--package", "{package}", "--log", "validation-results/native.log"], "timeout": 90, "log": "validation-results/native.log", "success": "PCSX2_NATIVE_OK", "scope": "identity/options/initialization/rejected-content/cleanup"},
+    {"layer": "catui", "command": ["{python}", "validation/core_frontend.py", "--core", "pcsx2", "--package", "{package}", "--log", "validation-results/catui.log"], "timeout": 120, "log": "validation-results/catui.log", "success": "CATUI_COMPATIBILITY_OK", "scope": "LibretroSession/headless/initialization/rejected-content/cleanup"}
+  ],
+  "eden": [
+    {"layer": "native", "command": ["{python}", "validation/core_native.py", "--core", "eden", "--package", "{package}", "--log", "validation-results/native.log"], "timeout": 90, "log": "validation-results/native.log", "success": "EDEN_NATIVE_OK", "scope": "identity/options/initialization/rejected-content/cleanup"},
+    {"layer": "catui", "command": ["{python}", "validation/core_frontend.py", "--core", "eden", "--package", "{package}", "--log", "validation-results/catui.log"], "timeout": 120, "log": "validation-results/catui.log", "success": "CATUI_COMPATIBILITY_OK", "scope": "LibretroSession/headless/initialization/rejected-content/cleanup"}
+  ],
+  "rpcs3": [
+    {"layer": "native", "command": ["{python}", "validation/core_native.py", "--core", "rpcs3", "--package", "{package}", "--log", "validation-results/native.log"], "timeout": 90, "log": "validation-results/native.log", "success": "RPCS3_NATIVE_OK", "scope": "identity/options/initialization/rejected-content/cleanup"},
+    {"layer": "catui", "command": ["{python}", "validation/core_frontend.py", "--core", "rpcs3", "--package", "{package}", "--log", "validation-results/catui.log"], "timeout": 120, "log": "validation-results/catui.log", "success": "CATUI_COMPATIBILITY_OK", "scope": "LibretroSession/headless/initialization/rejected-content/cleanup"}
+  ],
+  "shadps4": [
+    {"layer": "native", "command": ["{python}", "validation/core_native.py", "--core", "shadps4", "--package", "{package}", "--log", "validation-results/native.log"], "timeout": 90, "log": "validation-results/native.log", "success": "SHADPS4_NATIVE_OK", "scope": "identity/options/initialization/rejected-content/cleanup"},
+    {"layer": "catui", "command": ["{python}", "validation/core_frontend.py", "--core", "shadps4", "--package", "{package}", "--log", "validation-results/catui.log"], "timeout": 120, "log": "validation-results/catui.log", "success": "CATUI_COMPATIBILITY_OK", "scope": "LibretroSession/headless/initialization/rejected-content/cleanup"}
+  ],
+  "ppsspp": [
+    {"layer": "native", "command": ["{python}", "validation/core_native.py", "--core", "ppsspp", "--package", "{package}", "--log", "validation-results/native.log"], "timeout": 90, "log": "validation-results/native.log", "success": "PPSSPP_NATIVE_OK", "scope": "identity/options/initialization/rejected-content/cleanup"},
+    {"layer": "catui", "command": ["{python}", "validation/core_frontend.py", "--core", "ppsspp", "--package", "{package}", "--log", "validation-results/catui.log"], "timeout": 120, "log": "validation-results/catui.log", "success": "CATUI_COMPATIBILITY_OK", "scope": "LibretroSession/headless/initialization/rejected-content/cleanup"}
+  ],
+  "flycast": [
+    {"layer": "native", "command": ["{python}", "validation/core_native.py", "--core", "flycast", "--package", "{package}", "--log", "validation-results/native.log"], "timeout": 90, "log": "validation-results/native.log", "success": "FLYCAST_NATIVE_OK", "scope": "identity/options/initialization/rejected-content/cleanup"},
+    {"layer": "catui", "command": ["{python}", "validation/core_frontend.py", "--core", "flycast", "--package", "{package}", "--log", "validation-results/catui.log"], "timeout": 120, "log": "validation-results/catui.log", "success": "CATUI_COMPATIBILITY_OK", "scope": "LibretroSession/headless/initialization/rejected-content/cleanup"}
+  ],
+  "cemu": [
+    {"layer": "native", "command": ["{python}", "validation/core_native.py", "--core", "cemu", "--package", "{package}", "--log", "validation-results/native.log"], "timeout": 90, "log": "validation-results/native.log", "success": "CEMU_NATIVE_OK", "scope": "identity/options/initialization/rejected-content/cleanup"},
+    {"layer": "catui", "command": ["{python}", "validation/core_frontend.py", "--core", "cemu", "--package", "{package}", "--log", "validation-results/catui.log"], "timeout": 120, "log": "validation-results/catui.log", "success": "CATUI_COMPATIBILITY_OK", "scope": "LibretroSession/headless/initialization/rejected-content/cleanup"}
+  ]
+}

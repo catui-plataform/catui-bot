@@ -1,0 +1,46 @@
+{
+  "pcsx2": {
+    "api": "https://api.github.com/repos/PCSX2/pcsx2",
+    "repository": "https://github.com/PCSX2/pcsx2.git",
+    "mode": "commit",
+    "branch": "master"
+  },
+  "eden": {
+    "api": "https://api.github.com/repos/eden-emulator/mirror",
+    "repository": "https://git.eden-emu.dev/eden-emu/eden.git",
+    "mode": "commit",
+    "mirror_repository": "https://github.com/eden-emulator/mirror.git",
+    "canonical_api": "https://git.eden-emu.dev/api/v1/repos/eden-emu/eden",
+    "branch": "master"
+  },
+  "rpcs3": {
+    "api": "https://api.github.com/repos/RPCS3/rpcs3",
+    "repository": "https://github.com/RPCS3/rpcs3.git",
+    "mode": "commit",
+    "branch": "master"
+  },
+  "ppsspp": {
+    "api": "https://api.github.com/repos/hrydgard/ppsspp",
+    "repository": "https://github.com/hrydgard/ppsspp.git",
+    "mode": "commit",
+    "branch": "master"
+  },
+  "cemu": {
+    "api": "https://api.github.com/repos/cemu-project/Cemu",
+    "repository": "https://github.com/cemu-project/Cemu.git",
+    "mode": "commit",
+    "branch": "main"
+  },
+  "flycast": {
+    "api": "https://api.github.com/repos/flyinghead/flycast",
+    "repository": "https://github.com/flyinghead/flycast.git",
+    "mode": "commit",
+    "branch": "master"
+  },
+  "shadps4": {
+    "api": "https://api.github.com/repos/shadps4-emu/shadPS4",
+    "repository": "https://github.com/shadps4-emu/shadPS4.git",
+    "mode": "commit",
+    "branch": "main"
+  }
+}

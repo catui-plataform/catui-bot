@@ -1,0 +1,115 @@
+name: Core build worker
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+      review:
+        type: boolean
+        default: false
+    secrets:
+      DEEPSEEK_API_KEY:
+        required: false
+permissions:
+  contents: read
+jobs:
+  worker:
+    runs-on: ${{ vars.CORE_RUNNER || 'windows-2025-vs2026' }}
+    timeout-minutes: 240
+    env:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      DEEPSEEK_MODEL: ${{ vars.DEEPSEEK_MODEL || 'deepseek-flash' }}
+      AI_REPAIR_ENABLED: ${{ vars.AI_REPAIR_ENABLED || 'true' }}
+      PYTHON_REPAIR_MAX_ATTEMPTS: ${{ vars.PYTHON_REPAIR_MAX_ATTEMPTS || '4' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: catui-plataform/CATui
+          ref: ${{ fromJSON(inputs.plan).store_head }}
+          path: store-repo
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: dependency-cache
+        with:
+          path: |
+            ~/.cache/vcpkg/archives
+            ~/AppData/Local/vcpkg/archives
+          key: pcsx2-static-${{ runner.os }}-${{ hashFiles('config/vcpkg/**', 'config/dependencies.json') }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            runtime-tools/godot
+            runtime-tools/frontend
+            runtime-tools/ready.json
+          key: catui-frontend-${{ runner.os }}-${{ hashFiles('config/frontend.json', 'tools/prepare_frontend.py') }}
+      - name: Configure MSVC environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $install = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $install) { throw 'MSVC x64 is required' }
+          & (Join-Path $install 'Common7/Tools/Launch-VsDevShell.ps1') -Arch amd64 -HostArch amd64
+          Get-ChildItem Env: | ForEach-Object { if ($_.Name -in @('PATH','INCLUDE','LIB','LIBPATH','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion')) { "$($_.Name)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 } }
+      - name: Install static core dependencies
+        id: dependencies
+        run: python tools/run_build.py tools/prepare_dependencies.py --core "${{ fromJSON(inputs.plan).core }}"
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: always() && steps.dependencies.outcome == 'success' && steps.dependency-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cache/vcpkg/archives
+            ~/AppData/Local/vcpkg/archives
+          key: pcsx2-static-${{ runner.os }}-${{ hashFiles('config/vcpkg/**', 'config/dependencies.json') }}
+      - name: Prepare CATui compatibility frontend
+        run: python tools/run_build.py tools/prepare_frontend.py
+      - name: Download integration review
+        if: inputs.review
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: core-review
+          path: review
+      - name: Build and validate approved source
+        id: compile
+        shell: pwsh
+        run: python tools/run_build.py
+        env:
+          APPROVED_PLAN: ${{ inputs.plan }}
+          CMAKE_PREFIX_PATH: ${{ vars.CMAKE_PREFIX_PATH }}
+          CMAKE_TOOLCHAIN_FILE: ${{ vars.CMAKE_TOOLCHAIN_FILE }}
+          Qt6_DIR: ${{ vars.Qt6_DIR }}
+          LLVM_DIR: ${{ vars.LLVM_DIR }}
+          VULKAN_SDK: ${{ env.VULKAN_SDK }}
+          CORE_VALIDATION_SCRIPT: validation/validate.py
+          REQUIRE_INTEGRATION_REVIEW: ${{ inputs.review }}
+          AI_REPAIR_MAX_ATTEMPTS: ${{ vars.AI_REPAIR_MAX_ATTEMPTS || '12' }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: upload
+        if: steps.compile.outcome == 'success'
+        with:
+          name: core-output
+          path: core-output/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve diagnostic log
+        if: failure() || steps.compile.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: build-diagnostics
+          path: |
+            build.log
+            attempt.log
+            tooling-repairs.json
+            core-recovery.json
+            core-work/catui-package/
+            failure-context.json
+            validation-results/
+          retention-days: 7

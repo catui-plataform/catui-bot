@@ -1,0 +1,5 @@
+{
+  "cmake": ["-DLIBRETRO=ON", "-DHEADLESS=OFF", "-DUNITTEST=OFF", "-DUSE_DISCORD=OFF"],
+  "targets": ["ppsspp_libretro"],
+  "outputs": [{"name": "ppsspp_libretro.dll", "destination": "ppsspp_libretro.dll"}]
+}

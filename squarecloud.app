@@ -1,0 +1,7 @@
+MAIN=main.py
+MEMORY=256
+VERSION=recommended
+DISPLAY_NAME=CATui Bot
+DESCRIPTION=CATui private control
+RUNTIME=python
+AUTORESTART=true

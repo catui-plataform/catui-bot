@@ -1,0 +1,9 @@
+{
+  "rpcs3": {
+    "url": "https://github.com/catui-plataform/catui-bot/releases/download/deps-v1/rpcs3-windows.zip",
+    "sha256": "replace-with-the-sha256-of-your-dependency-archive",
+    "Qt6_DIR": "Qt/lib/cmake/Qt6",
+    "LLVM_DIR": "LLVM/lib/cmake/llvm",
+    "VULKAN_SDK": "VulkanSDK"
+  }
+}

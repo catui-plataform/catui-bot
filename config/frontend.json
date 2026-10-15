@@ -1,0 +1,6 @@
+{
+  "godot_url": "https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip",
+  "godot_sha256": "731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953",
+  "frontend_url": "https://raw.githubusercontent.com/catui-plataform/CATui/d663f89b5f11263cdbcf3371cb833596a8334c12/store/tools/compatibility/catui_core.dll",
+  "frontend_sha256": "1930ddbdc93f8dd55325c83c31ce4b1f6a12a9621fbcd2365b86096c69cf71e2"
+}

@@ -1,0 +1,5 @@
+{
+  "cmake": ["-DENABLE_LIBRETRO=ON", "-DENABLE_VCPKG=ON", "-DVCPKG_TARGET_TRIPLET=x64-windows-static"],
+  "targets": ["cemu_libretro"],
+  "outputs": [{"name": "cemu_libretro.dll", "destination": "cemu_libretro.dll"}]
+}

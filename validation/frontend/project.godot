@@ -1,0 +1,9 @@
+config_version=5
+
+[application]
+config/name="CATui Core Compatibility Probe"
+config/use_custom_user_dir=true
+config/custom_user_dir_name="catui-core-ci"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"

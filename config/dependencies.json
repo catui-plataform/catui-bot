@@ -1,0 +1,7 @@
+{
+  "pcsx2": {
+    "provider": "vcpkg",
+    "commit": "c52f7bd748185ef0e0daf033d9f2ddfc8a3449ea",
+    "triplet": "x64-windows-static"
+  }
+}

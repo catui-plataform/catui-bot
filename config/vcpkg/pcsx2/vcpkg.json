@@ -1,0 +1,11 @@
+{
+  "name": "catui-pcsx2-dependencies",
+  "version-string": "1",
+  "builtin-baseline": "c52f7bd748185ef0e0daf033d9f2ddfc8a3449ea",
+  "dependencies": [
+    "libpng", "libjpeg-turbo", "zlib", "zstd", "lz4", "libwebp",
+    {"name": "sdl3", "default-features": false},
+    "freetype", "plutovg", "plutosvg", "ryml", "directx-headers",
+    {"name": "shaderc", "default-features": false}
+  ]
+}

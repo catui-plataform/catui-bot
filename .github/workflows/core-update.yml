@@ -1,0 +1,134 @@
+name: Update core
+run-name: catui/${{ fromJSON(inputs.plan).core }}/${{ fromJSON(inputs.plan).id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      plan:
+        description: Signed owner-approved plan
+        required: true
+        type: string
+      signature:
+        description: Approval HMAC
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-updates
+  cancel-in-progress: false
+
+jobs:
+  approval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Mask the scoped approval signature
+        run: |
+          python -c 'import json, os; print("::add-mask::" + json.load(open(os.environ["GITHUB_EVENT_PATH"]))["inputs"]["signature"])'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: python tools/preflight.py
+        env:
+          APPROVED_PLAN: ${{ inputs.plan }}
+          APPROVAL_SIGNATURE: ${{ inputs.signature }}
+          APPROVAL_SIGNING_KEY: ${{ secrets.APPROVAL_SIGNING_KEY }}
+          DISCORD_OWNER_ID: ${{ vars.DISCORD_OWNER_ID }}
+
+  access:
+    needs: approval
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: core-publish
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: catui-plataform/CATui
+          ref: main
+          path: store-repo
+          persist-credentials: false
+      - name: Check publication access before building
+        run: python tools/check_publish_access.py
+        env:
+          STORE_PUBLISH_TOKEN: ${{ secrets.STORE_PUBLISH_TOKEN }}
+
+  review:
+    needs: access
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: catui-plataform/CATui
+          ref: ${{ fromJSON(inputs.plan).store_head }}
+          path: store-repo
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Review upstream integration changes
+        run: python tools/review_core.py
+        env:
+          APPROVED_PLAN: ${{ inputs.plan }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          AI_REPAIR_ENABLED: ${{ vars.AI_REPAIR_ENABLED || 'true' }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: core-review
+          path: review/core-review.json
+          retention-days: 3
+
+  build:
+    needs: review
+    uses: ./.github/workflows/build-worker.yml
+    with:
+      plan: ${{ inputs.plan }}
+      review: true
+    secrets:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
+  publish:
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: core-publish
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: catui-plataform/CATui
+          ref: main
+          path: store-repo
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: core-output
+          path: core-output
+      - name: Verify and publish
+        run: python tools/publish_core.py
+        env:
+          APPROVED_PLAN: ${{ inputs.plan }}
+          APPROVAL_SIGNATURE: ${{ inputs.signature }}
+          APPROVAL_SIGNING_KEY: ${{ secrets.APPROVAL_SIGNING_KEY }}
+          DISCORD_OWNER_ID: ${{ vars.DISCORD_OWNER_ID }}
+          STORE_PUBLISH_TOKEN: ${{ secrets.STORE_PUBLISH_TOKEN }}

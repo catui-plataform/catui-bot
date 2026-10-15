@@ -1,0 +1,5 @@
+{
+  "cmake": ["-DLIBRETRO=ON", "-DUSE_HOST_LIBZIP=OFF", "-DUSE_HOST_SDL=OFF", "-DENABLE_CTEST=OFF"],
+  "targets": ["flycast_libretro"],
+  "outputs": [{"name": "flycast_libretro.dll", "destination": "flycast_libretro.dll"}]
+}

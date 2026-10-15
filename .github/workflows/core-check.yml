@@ -1,0 +1,44 @@
+name: Check core build without publishing
+run-name: check/${{ inputs.core }}
+on:
+  workflow_dispatch:
+    inputs:
+      core:
+        type: choice
+        required: true
+        options: [pcsx2, eden, rpcs3, shadps4, ppsspp, flycast, cemu]
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+    steps:
+      - name: Pin the current catalog source
+        id: plan
+        shell: python
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CORE: ${{ inputs.core }}
+          OWNER: ${{ vars.DISCORD_OWNER_ID }}
+        run: |
+          import base64, json, os, secrets, subprocess, time
+          def api(path):
+              return json.loads(subprocess.check_output(["gh", "api", path]))
+          core = os.environ["CORE"]
+          assert core in {"pcsx2", "eden", "rpcs3", "shadps4", "ppsspp", "flycast", "cemu"}
+          head = api("repos/catui-plataform/CATui/commits/main")["sha"]
+          data = api(f"repos/catui-plataform/CATui/contents/store/cores/{core}/source/upstream.json?ref={head}")
+          sha = json.loads(base64.b64decode(data["content"]))["commit"]
+          plan = dict(id=secrets.token_hex(12), core=core, sha=sha, version=sha[:12],
+                      store_head=head, owner=os.environ["OWNER"], expires=int(time.time()) + 86400)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write("plan=" + json.dumps(plan, separators=(",", ":")) + "\n")
+  build:
+    needs: baseline
+    uses: ./.github/workflows/build-worker.yml
+    with:
+      plan: ${{ needs.baseline.outputs.plan }}
+    secrets:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
