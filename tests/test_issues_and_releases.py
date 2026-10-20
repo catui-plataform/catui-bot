@@ -102,11 +102,11 @@ class IssueAndReleaseLLMTests(unittest.TestCase):
         self.assertNotIn("🛑", issue["body"])
         # Check user report section
         self.assertIn("## User Reports & Comments", issue["body"])
-        self.assertIn("@GamerTwo", issue["body"])
+        self.assertIn("#GamerTwo", issue["body"])
         self.assertIn("I also reproduced this", issue["body"])
         # Check maintainer notes section
         self.assertIn("## Maintainer Notes", issue["body"])
-        self.assertIn("@AdminDev", issue["body"])
+        self.assertIn("#AdminDev", issue["body"])
         self.assertIn("Confirmed in pcsx2 input handler", issue["body"])
         self.assertIn("High priority fix needed.", issue["body"])
         # Check image embeds
@@ -246,6 +246,11 @@ class IssueAndReleaseAsyncTests(unittest.IsolatedAsyncioTestCase):
             is_update=True
         )
         self.assertIn("sounds like a runtime errorr", result["comment"])
+        self.assertEqual(result["comment"].count("sounds like a runtime errorr"), 1)
+        self.assertIn("#Tester", result["comment"])
+        self.assertIn("#Admin", result["comment"])
+        self.assertNotIn("@Tester", result["comment"])
+        self.assertNotIn("@Admin", result["comment"])
         self.assertIn("sounds like a runtime errorr", result["body"])
         self.assertIn("I reproduced this!", result["comment"])
         self.assertIn("Checking logs now", result["comment"])
@@ -498,9 +503,33 @@ Closed testing on Windows.
         comment = res["comment"]
         self.assertIn("### Update from Discord Thread", comment)
         self.assertIn("Investigated in core render loop.", comment)
-        self.assertIn("@TesterTwo", comment)
+        self.assertIn("#TesterTwo", comment)
+        self.assertNotIn("@TesterTwo", comment)
         self.assertIn("![chapter2.png](https://cdn.discord.com/chapter2.png)", comment)
         self.assertNotIn("🚀", comment)
+
+    def test_build_update_comment_deduplication_and_formatting(self):
+        from catui_bot.llm import build_update_comment
+        extra = [
+            {"id": 1, "author": "@Developer", "content": "working on a fix", "is_admin": True, "images": []},
+            {"id": 2, "author": "#User123", "content": "I see this bug too", "is_admin": False, "images": [{"filename": "img.png", "url": "https://img.png"}]},
+            {"id": 3, "author": "User123", "content": "I see this bug too", "is_admin": False, "images": []},  # duplicate text from extra
+            {"id": 4, "author": "Admin", "content": "same note", "is_admin": True, "images": []},  # duplicate text matching description
+        ]
+        comment = build_update_comment(
+            description="same note",
+            extra_messages=extra,
+            attachments=[{"filename": "img.png", "url": "https://img.png"}, "https://dump.log"]  # duplicate img, new file
+        )
+        self.assertEqual(comment.count("same note"), 1)
+        self.assertEqual(comment.count("I see this bug too"), 1)
+        self.assertEqual(comment.count("https://img.png"), 1)
+        self.assertIn("#Developer (Maintainer)", comment)
+        self.assertIn("#User123 (User)", comment)
+        self.assertNotIn("@Developer", comment)
+        self.assertNotIn("@User123", comment)
+        self.assertNotIn("#Admin", comment)  # deduplicated because content was identical to description
+        self.assertIn("- [dump.log](https://dump.log)", comment)
 
     async def test_find_existing_issue_in_thread(self):
         # 1. Thread with embed title "GitHub Issue #88"
