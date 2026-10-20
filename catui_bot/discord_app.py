@@ -4,6 +4,7 @@ import logging
 import re
 import time
 import sys
+from typing import Optional
 import aiohttp
 import discord
 from discord import app_commands
@@ -830,13 +831,13 @@ class Bot(discord.Client):
         @app_commands.describe(
             message="Optional text note, message IDs, or links (space-separated, e.g. 'another test 1562184884800192664')",
             new="Set to True to create a new issue instead of updating the existing one",
-            solved="Set to True to mark this issue as solved and close it on GitHub"
+            solved="Set to True to mark as solved/closed, or False to reopen the issue and thread"
         )
         async def issue_cmd(
             interaction: discord.Interaction,
             message: str = None,
             new: bool = False,
-            solved: bool = False
+            solved: Optional[bool] = None
         ):
             await self.discord_io.call(interaction.response.defer, ephemeral=False)
             target = interaction.channel
@@ -902,20 +903,42 @@ class Bot(discord.Client):
             thread_tags = [t.name for t in thread_tag_objects if hasattr(t, "name")]
             thread_tags_lower = [t.lower().strip() for t in thread_tags]
 
-            is_solved = bool(solved)
-            if not is_solved and ("solved" in thread_tags_lower or "resolvido" in thread_tags_lower):
+            is_solved = False
+            is_reopen = False
+
+            if solved is True:
                 is_solved = True
-            if not is_solved and note_text:
+            elif solved is False:
+                is_reopen = True
+
+            if note_text:
                 note_lower = note_text.lower().strip()
-                if note_lower in ("solved", "--solved"):
-                    is_solved = True
+                if note_lower in ("reopen", "--reopen", "unsolve", "unsolved"):
+                    is_reopen = True
+                    is_solved = False
                     note_text = ""
-                elif note_lower.endswith(" solved"):
+                elif note_lower.endswith(" reopen") or note_lower.endswith(" unsolved"):
+                    is_reopen = True
+                    is_solved = False
+                    note_text = note_text.rsplit(" ", 1)[0].strip()
+                elif note_lower.startswith("reopen ") or note_lower.startswith("unsolve "):
+                    is_reopen = True
+                    is_solved = False
+                    note_text = note_text.split(" ", 1)[1].strip()
+                elif not is_reopen and not is_solved and solved is None:
+                    if note_lower in ("solved", "--solved"):
+                        is_solved = True
+                        note_text = ""
+                    elif note_lower.endswith(" solved"):
+                        is_solved = True
+                        note_text = note_text[:-7].strip()
+                    elif note_lower.startswith("solved "):
+                        is_solved = True
+                        note_text = note_text[7:].strip()
+
+            if not is_solved and not is_reopen and solved is None:
+                if "solved" in thread_tags_lower or "resolvido" in thread_tags_lower:
                     is_solved = True
-                    note_text = note_text[:-7].strip()
-                elif note_lower.startswith("solved "):
-                    is_solved = True
-                    note_text = note_text[7:].strip()
 
             # Process extra messages
             extra_messages = []
@@ -981,6 +1004,7 @@ class Bot(discord.Client):
                     new=new,
                     existing_issue=existing,
                     solved=is_solved,
+                    reopen=is_reopen,
                     thread_tags=thread_tags
                 )
             except RemoteError as exc:
@@ -1004,6 +1028,7 @@ class Bot(discord.Client):
 
             action = created.get("action", "")
             is_action_solved = action == "solved"
+            is_action_reopened = action == "reopened"
             is_updated = action == "updated"
             labels_str = ", ".join(created["labels"]) if created["labels"] else "none"
 
@@ -1011,6 +1036,10 @@ class Bot(discord.Client):
                 title_text = f"GitHub Issue #{created['number']} (Solved)"
                 desc_text = f"**[{created['title']}]({created['url']})**\n*(Issue marked as solved and closed on GitHub)*"
                 embed_color = 0x2ecc71
+            elif is_action_reopened:
+                title_text = f"GitHub Issue #{created['number']} (Reopened)"
+                desc_text = f"**[{created['title']}]({created['url']})**\n*(Issue reopened on GitHub and thread unlocked)*"
+                embed_color = 0xFEE75C
             elif is_updated:
                 title_text = f"GitHub Issue #{created['number']} (Updated)"
                 desc_text = f"**[{created['title']}]({created['url']})**\n*(Updated existing issue on GitHub with latest notes & comments)*"
@@ -1030,6 +1059,8 @@ class Bot(discord.Client):
             embed.add_field(name="Labels", value=f"`{labels_str}`", inline=True)
             if is_action_solved:
                 embed.add_field(name="Status", value="`Closed (Solved)`", inline=True)
+            elif is_action_reopened:
+                embed.add_field(name="Status", value="`Open (Reopened)`", inline=True)
             elif starter_data["author"]:
                 embed.add_field(name="Reported by", value=starter_data["author"], inline=True)
 
@@ -1040,8 +1071,13 @@ class Bot(discord.Client):
                     value=f"{len(extra_messages)} message(s) ({total_imgs} screenshot(s)/file(s))",
                     inline=False
                 )
-            if (is_updated or is_action_solved) and note_text:
-                field_title = "Maintainer Resolution Note" if is_action_solved else "Maintainer Update Note"
+            if (is_updated or is_action_solved or is_action_reopened) and note_text:
+                if is_action_solved:
+                    field_title = "Maintainer Resolution Note"
+                elif is_action_reopened:
+                    field_title = "Maintainer Reopen Note"
+                else:
+                    field_title = "Maintainer Update Note"
                 embed.add_field(name=field_title, value=note_text[:1000], inline=False)
 
             view = SafeView(timeout=180)
@@ -1067,6 +1103,20 @@ class Bot(discord.Client):
                     await self.discord_io.call(target.edit, **edit_kwargs)
                 except Exception as exc:
                     log.warning("Could not close/lock solved Discord thread %s: %s", getattr(target, "id", None), exc)
+
+            elif is_action_reopened and is_thread:
+                try:
+                    edit_kwargs = {"locked": False, "archived": False}
+                    if hasattr(target, "applied_tags"):
+                        remaining_tags = [
+                            t for t in target.applied_tags
+                            if getattr(t, "name", "").lower().strip() not in ("solved", "resolvido", "fechado")
+                        ]
+                        if len(remaining_tags) != len(target.applied_tags):
+                            edit_kwargs["applied_tags"] = remaining_tags
+                    await self.discord_io.call(target.edit, **edit_kwargs)
+                except Exception as exc:
+                    log.warning("Could not unlock/unarchive reopened Discord thread %s: %s", getattr(target, "id", None), exc)
 
         @self.tree.command(name="release", description="Format the latest CATui release into the official announcement template", guild=guild)
         @app_commands.describe(

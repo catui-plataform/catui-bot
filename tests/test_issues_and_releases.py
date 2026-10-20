@@ -514,7 +514,33 @@ Closed testing on Windows.
             description=None,
             is_update=False,
             solved=False,
+            reopen=False,
             thread_tags=["catui", "core"]
+        )
+
+        # 7. Running with reopen=True reopens the issue on GitHub
+        self.upstream.update_issue.reset_mock()
+        self.upstream.update_issue.return_value = {
+            "url": "https://github.com/arthiee4/catui-main/issues/103",
+            "number": 103,
+            "labels": ["bug", "ui"]
+        }
+        reopened_res = await self.service.create_github_issue(
+            thread_title="Bug Report",
+            starter={"author": "User1", "content": "Initial text", "is_admin": False, "images": [], "files": []},
+            description="Reopening issue, bug reproduced again",
+            thread_id=555666777,
+            reopen=True
+        )
+        self.assertEqual(reopened_res["action"], "reopened")
+        self.upstream.update_issue.assert_awaited_once_with(
+            repo="arthiee4/catui-main",
+            issue_number=103,
+            title="Bug Report",
+            body="Body",
+            labels=["catui", "core"],
+            state="open",
+            state_reason="reopened"
         )
 
     async def test_owner_tree_permissions_and_admin_delegation(self):
@@ -654,14 +680,32 @@ Closed testing on Windows.
             await cmd.callback(interaction, message="solved", new=False, solved=True)
             target.edit.assert_awaited_once_with(applied_tags=[core_tag, solved_tag], locked=True, archived=True)
 
-            # Also verify running without solved=True on an already-tagged thread recognizes it as solved and locks/archives it
+            # 1. Running with solved=None on an already-tagged thread recognizes it as solved and locks/archives it
             bot.service.create_github_issue.reset_mock()
             target.edit.reset_mock()
             target.applied_tags = [core_tag, solved_tag]
-            await cmd.callback(interaction, message="status check", new=False, solved=False)
+            await cmd.callback(interaction, message="status check", new=False, solved=None)
             bot.service.create_github_issue.assert_awaited_once()
             self.assertTrue(bot.service.create_github_issue.call_args.kwargs["solved"])
             target.edit.assert_awaited_once_with(locked=True, archived=True)
+
+            # 2. Running with solved=False reopens the issue, removes solved tag, unlocks and unarchives thread
+            bot.service.create_github_issue.reset_mock()
+            bot.service.create_github_issue.return_value = {
+                "repo": "arthiee4/catui-main",
+                "title": "Crash in PCSX2",
+                "body": "Reopened",
+                "labels": ["core"],
+                "url": "https://github.com/arthiee4/catui-main/issues/999",
+                "number": 999,
+                "action": "reopened"
+            }
+            target.edit.reset_mock()
+            await cmd.callback(interaction, message="reopening bug", new=False, solved=False)
+            bot.service.create_github_issue.assert_awaited_once()
+            self.assertTrue(bot.service.create_github_issue.call_args.kwargs["reopen"])
+            self.assertFalse(bot.service.create_github_issue.call_args.kwargs["solved"])
+            target.edit.assert_awaited_once_with(applied_tags=[core_tag], locked=False, archived=False)
         finally:
             if hasattr(bot, "session") and not bot.session.closed:
                 await bot.session.close()

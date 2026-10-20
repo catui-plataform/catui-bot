@@ -287,11 +287,18 @@ def build_issue_body(summary=None, details=None, extra_messages=None, attachment
     return "\n".join(body_parts)
 
 
-def build_update_comment(description=None, extra_messages=None, attachments=None, solved=False):
-    header = "### Issue Solved - Update from Discord Thread" if solved else "### Update from Discord Thread"
+def build_update_comment(description=None, extra_messages=None, attachments=None, solved=False, reopen=False):
+    if solved:
+        header = "### Issue Solved - Update from Discord Thread"
+    elif reopen:
+        header = "### Issue Reopened - Update from Discord Thread"
+    else:
+        header = "### Update from Discord Thread"
     comment_parts = [header]
     if solved:
         comment_parts.append("**Status:** Closed / Resolved")
+    elif reopen:
+        comment_parts.append("**Status:** Reopened")
     seen_texts = set()
 
     desc_clean = strip_emojis(description).strip() if description else ""
@@ -433,7 +440,7 @@ class Assistant:
                            "prerelease": release["prerelease"], "description": release["body"][:10000]})
         return await self.request(system, data, 220)
 
-    async def format_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, is_update=False, solved=False, thread_tags=None):
+    async def format_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, is_update=False, solved=False, reopen=False, thread_tags=None):
         if is_update:
             system = (
                 "You are an expert GitHub issue assistant for CATui (a modern emulator frontend built in Godot).\n"
@@ -547,7 +554,7 @@ class Assistant:
                                 tag = f"![{fn}]({u})"
                                 if u not in body:
                                     body = f"{body}\n\n{tag}"
-                    res = {"title": title, "body": body, "labels": labels, "comment": build_update_comment(description, extra_messages, attachments, solved=solved)}
+                    res = {"title": title, "body": body, "labels": labels, "comment": build_update_comment(description, extra_messages, attachments, solved=solved, reopen=reopen)}
                     return res
 
                 # New issue creation: build structured body deterministically
@@ -574,10 +581,10 @@ class Assistant:
         except Exception as exc:
             log.warning("DeepSeek issue formatting failed, using fallback: %s", type(exc).__name__)
 
-        return self.fallback_issue(thread_title, starter, extra_messages, reporter, attachments, description, is_update=is_update, solved=solved, thread_tags=thread_tags)
+        return self.fallback_issue(thread_title, starter, extra_messages, reporter, attachments, description, is_update=is_update, solved=solved, reopen=reopen, thread_tags=thread_tags)
 
     @staticmethod
-    def fallback_issue(thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, is_update=False, solved=False, thread_tags=None):
+    def fallback_issue(thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, is_update=False, solved=False, reopen=False, thread_tags=None):
         title = strip_emojis(thread_title).strip() or "Issue Report from Discord"
         body = build_issue_body(
             summary=None,
@@ -594,7 +601,7 @@ class Assistant:
             "labels": canonicalize_labels(["bug"], thread_tags=thread_tags)
         }
         if is_update:
-            res["comment"] = build_update_comment(description, extra_messages, attachments, solved=solved)
+            res["comment"] = build_update_comment(description, extra_messages, attachments, solved=solved, reopen=reopen)
         return res
 
     async def format_release(self, tag_name, release_name, release_body):
