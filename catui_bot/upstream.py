@@ -196,6 +196,38 @@ class Upstream:
             "labels": [l.get("name", "") for l in data.get("labels", []) if isinstance(l, dict)]
         }
 
+    async def update_issue(self, repo, issue_number, title=None, body=None, labels=None):
+        url = f"https://api.github.com/repos/{repo}/issues/{issue_number}"
+        payload = {}
+        if title is not None:
+            payload["title"] = title
+        if body is not None:
+            payload["body"] = body
+        if labels is not None:
+            payload["labels"] = list(labels)
+        try:
+            data = await self.http.json(url, method="PATCH", payload=payload)
+        except RemoteError as exc:
+            if exc.status == 422 and "labels" in payload:
+                payload.pop("labels")
+                data = await self.http.json(url, method="PATCH", payload=payload)
+            else:
+                raise
+        return {
+            "url": data.get("html_url", ""),
+            "number": data.get("number", issue_number),
+            "labels": [l.get("name", "") for l in data.get("labels", []) if isinstance(l, dict)]
+        }
+
+    async def add_issue_comment(self, repo, issue_number, comment_body):
+        url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
+        payload = {"body": comment_body}
+        data = await self.http.json(url, method="POST", payload=payload)
+        return {
+            "id": data.get("id"),
+            "url": data.get("html_url", "")
+        }
+
     async def catui_release(self, tag=None):
         if tag:
             url = f"https://api.github.com/repos/{STORE_REPO}/releases/tags/{quote(tag, safe='')}"

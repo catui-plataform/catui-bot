@@ -24,6 +24,14 @@ class State:
             stage_pct INTEGER NOT NULL DEFAULT 0);
           CREATE TABLE IF NOT EXISTS release_summaries(core TEXT PRIMARY KEY, revision TEXT NOT NULL, data TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS admins(user_id INTEGER PRIMARY KEY, added_at INTEGER NOT NULL);
+          CREATE TABLE IF NOT EXISTS thread_issues(
+            thread_id INTEGER PRIMARY KEY,
+            repo TEXT NOT NULL,
+            issue_number INTEGER NOT NULL,
+            issue_url TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          );
           CREATE INDEX IF NOT EXISTS job_core_sha ON jobs(core,sha,status);
           CREATE INDEX IF NOT EXISTS job_status ON jobs(status,created);
         """)
@@ -56,6 +64,24 @@ class State:
             return uid == int(owner_id) or uid in self.admins()
         except (ValueError, TypeError):
             return False
+
+    def get_thread_issue(self, thread_id):
+        try:
+            row = self.db.execute("SELECT * FROM thread_issues WHERE thread_id=?", (int(thread_id),)).fetchone()
+            return dict(row) if row else None
+        except Exception:
+            return None
+
+    def save_thread_issue(self, thread_id, repo, issue_number, issue_url):
+        now = int(time.time())
+        existing = self.get_thread_issue(thread_id)
+        created_at = existing["created_at"] if existing else now
+        with self.db:
+            self.db.execute(
+                "INSERT OR REPLACE INTO thread_issues(thread_id, repo, issue_number, issue_url, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (int(thread_id), str(repo), int(issue_number), str(issue_url), created_at, now)
+            )
 
     def watches(self):
         return {r["core"]: bool(r["enabled"]) for r in self.db.execute("SELECT * FROM watch")}

@@ -720,13 +720,14 @@ class Bot(discord.Client):
             )
             await self.discord_io.call(interaction.response.send_message, embed=embed, ephemeral=True)
 
-        @self.tree.command(name="issue", description="Create a GitHub issue in arthiee4/catui-main from this gallery thread/post", guild=guild)
+        @self.tree.command(name="issue", description="Create or update a GitHub issue in arthiee4/catui-main from this gallery post", guild=guild)
         @app_commands.describe(
             description="Optional extra details or maintainer notes for the issue",
             messages="Optional: message IDs or links (comma/space separated) to include extra comments/screenshots",
+            force_new="Set to True to force creating a new issue instead of updating the existing one for this thread",
             thread="Optional: specify an issue thread if not running directly inside it"
         )
-        async def issue_cmd(interaction: discord.Interaction, description: str = None, messages: str = None, thread: discord.Thread = None):
+        async def issue_cmd(interaction: discord.Interaction, description: str = None, messages: str = None, force_new: bool = False, thread: discord.Thread = None):
             await self.discord_io.call(interaction.response.defer, ephemeral=False)
             target = thread or (interaction.channel if isinstance(interaction.channel, discord.Thread) else None)
             if not target:
@@ -799,7 +800,9 @@ class Bot(discord.Client):
                     thread_title=target.name,
                     starter=starter_data,
                     extra_messages=extra_messages,
-                    description=description
+                    description=description,
+                    thread_id=target.id,
+                    force_new=force_new
                 )
             except RemoteError as exc:
                 if exc.status in {401, 403, 404}:
@@ -815,12 +818,18 @@ class Bot(discord.Client):
                 await self.discord_io.call(interaction.followup.send, f"Failed to create issue: {exc}", ephemeral=True)
                 return
 
+            is_updated = created.get("action") == "updated"
             labels_str = ", ".join(created["labels"]) if created["labels"] else "none"
+            title_text = f"GitHub Issue #{created['number']} (Updated)" if is_updated else f"GitHub Issue #{created['number']}"
+            desc_text = (
+                f"**[{created['title']}]({created['url']})**\n*(Updated existing issue on GitHub with latest notes & comments)*"
+                if is_updated else f"**[{created['title']}]({created['url']})**"
+            )
             embed = discord.Embed(
-                title=f"GitHub Issue #{created['number']}",
+                title=title_text,
                 url=created["url"],
-                description=f"**[{created['title']}]({created['url']})**",
-                color=0x57F287
+                description=desc_text,
+                color=0x5865F2 if is_updated else 0x57F287
             )
             embed.add_field(name="Repository", value=f"`{created['repo']}`", inline=True)
             embed.add_field(name="Labels", value=f"`{labels_str}`", inline=True)
@@ -835,7 +844,7 @@ class Bot(discord.Client):
                 )
 
             view = SafeView(timeout=180)
-            view.add_item(discord.ui.Button(label="View Issue on GitHub", url=created["url"]))
+            view.add_item(discord.ui.Button(label="View Issue (Admin Only)", url=created["url"]))
             await self.discord_io.call(interaction.followup.send, embed=embed, view=view)
 
         @self.tree.command(name="release", description="Format the latest CATui release into the official announcement template", guild=guild)

@@ -249,6 +249,68 @@ Closed testing on Windows.
         self.assertEqual(res["repo"], "arthiee4/catui-main")
         self.assertEqual(res["labels"], ["bug", "ui"])
 
+    async def test_service_sync_github_issue_updates_existing_and_force_new(self):
+        self.assistant.format_issue = AsyncMock(return_value={
+            "title": "Initial Title",
+            "body": "Initial Body",
+            "labels": ["bug"]
+        })
+        self.upstream.create_issue = AsyncMock(return_value={
+            "url": "https://github.com/arthiee4/catui-main/issues/101",
+            "number": 101,
+            "labels": ["bug"]
+        })
+        self.upstream.update_issue = AsyncMock(return_value={
+            "url": "https://github.com/arthiee4/catui-main/issues/101",
+            "number": 101,
+            "labels": ["bug", "ui"]
+        })
+        self.upstream.add_issue_comment = AsyncMock(return_value={"id": 1, "url": ""})
+
+        # 1. First run creates issue
+        created = await self.service.create_github_issue(
+            thread_title="Bug Report",
+            starter={"author": "User1", "content": "Initial text", "is_admin": False, "images": [], "files": []},
+            thread_id=555666777
+        )
+        self.assertEqual(created["action"], "created")
+        self.assertEqual(created["number"], 101)
+        self.upstream.create_issue.assert_awaited_once()
+
+        # 2. Second run in the same thread UPDATES the existing issue
+        self.assistant.format_issue.return_value = {
+            "title": "Updated Title",
+            "body": "Updated Body with Extra Notes",
+            "labels": ["bug", "ui"]
+        }
+        updated = await self.service.create_github_issue(
+            thread_title="Bug Report",
+            starter={"author": "User1", "content": "Initial text", "is_admin": False, "images": [], "files": []},
+            description="Additional maintainer info",
+            thread_id=555666777
+        )
+        self.assertEqual(updated["action"], "updated")
+        self.assertEqual(updated["number"], 101)
+        self.upstream.update_issue.assert_awaited_once()
+        self.upstream.add_issue_comment.assert_awaited_once()
+
+        # 3. Running with force_new creates a brand new issue
+        self.upstream.create_issue.reset_mock()
+        self.upstream.create_issue.return_value = {
+            "url": "https://github.com/arthiee4/catui-main/issues/102",
+            "number": 102,
+            "labels": ["bug"]
+        }
+        forced = await self.service.create_github_issue(
+            thread_title="Bug Report",
+            starter={"author": "User1", "content": "Initial text", "is_admin": False, "images": [], "files": []},
+            thread_id=555666777,
+            force_new=True
+        )
+        self.assertEqual(forced["action"], "created")
+        self.assertEqual(forced["number"], 102)
+        self.upstream.create_issue.assert_awaited_once()
+
     async def test_owner_tree_permissions_and_admin_delegation(self):
         bot = Bot(self.config)
         bot.discord_io = MagicMock(ready=True, call=AsyncMock())

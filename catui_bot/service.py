@@ -347,7 +347,7 @@ class Service:
                 self.state.transition(job["id"], job["status"], following)
 
 
-    async def create_github_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, repo=None):
+    async def create_github_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, repo=None, thread_id=None, force_new=False):
         target_repo = repo or getattr(self.config, "issues_repo", "arthiee4/catui-main")
         formatted = await self.assistant.format_issue(
             thread_title=thread_title,
@@ -357,19 +357,57 @@ class Service:
             attachments=attachments,
             description=description
         )
+
+        existing = self.state.get_thread_issue(thread_id) if (thread_id and not force_new) else None
+
+        if existing and existing.get("repo") == target_repo:
+            issue_number = existing["issue_number"]
+            issue_url = existing["issue_url"]
+            result = await self.upstream.update_issue(
+                repo=target_repo,
+                issue_number=issue_number,
+                title=formatted["title"],
+                body=formatted["body"],
+                labels=formatted.get("labels")
+            )
+            comment_parts = ["### Update from Discord Thread", "Issue updated with the latest messages/notes from Discord."]
+            if description and description.strip():
+                comment_parts.append(f"\n**Maintainer Note:** {description.strip()}")
+            if extra_messages:
+                comment_parts.append(f"\n*Incorporated {len(extra_messages)} additional message(s) / screenshot(s).*")
+            try:
+                await self.upstream.add_issue_comment(target_repo, issue_number, "\n".join(comment_parts))
+            except Exception:
+                pass
+
+            self.state.save_thread_issue(thread_id, target_repo, issue_number, issue_url)
+            return {
+                "repo": target_repo,
+                "title": formatted["title"],
+                "body": formatted["body"],
+                "labels": result.get("labels") or formatted.get("labels", []),
+                "url": issue_url,
+                "number": issue_number,
+                "action": "updated"
+            }
+
         result = await self.upstream.create_issue(
             repo=target_repo,
             title=formatted["title"],
             body=formatted["body"],
             labels=formatted.get("labels")
         )
+        if thread_id:
+            self.state.save_thread_issue(thread_id, target_repo, result.get("number", 0), result.get("url", ""))
+
         return {
             "repo": target_repo,
             "title": formatted["title"],
             "body": formatted["body"],
             "labels": result.get("labels") or formatted.get("labels", []),
             "url": result.get("url", ""),
-            "number": result.get("number", 0)
+            "number": result.get("number", 0),
+            "action": "created"
         }
 
     async def get_release_announcement(self, tag=None):
