@@ -83,6 +83,13 @@ class State:
                 (int(thread_id), str(repo), int(issue_number), str(issue_url), created_at, now)
             )
 
+    def delete_thread_issue(self, thread_id):
+        try:
+            with self.db:
+                self.db.execute("DELETE FROM thread_issues WHERE thread_id=?", (int(thread_id),))
+        except Exception:
+            pass
+
     def watches(self):
         return {r["core"]: bool(r["enabled"]) for r in self.db.execute("SELECT * FROM watch")}
 

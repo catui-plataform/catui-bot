@@ -371,42 +371,51 @@ class Service:
         if is_update:
             issue_number = existing["issue_number"]
             issue_url = existing["issue_url"]
-            result = await self.upstream.update_issue(
-                repo=target_repo,
-                issue_number=issue_number,
-                title=formatted["title"],
-                body=formatted["body"],
-                labels=formatted.get("labels")
-            )
-
-            comment_body = formatted.get("comment")
-            if not comment_body:
-                comment_parts = ["### Update from Discord Thread", "Issue updated with the latest messages/notes from Discord."]
-                if description and description.strip():
-                    comment_parts.append(f"\n**Maintainer Note:** {description.strip()}")
-                if extra_messages:
-                    comment_parts.append(f"\n*Incorporated {len(extra_messages)} additional message(s) / screenshot(s).*")
-                comment_body = "\n".join(comment_parts)
-            comment_body = strip_emojis(comment_body).strip()
-
             try:
-                await self.upstream.add_issue_comment(target_repo, issue_number, comment_body)
-            except Exception:
-                pass
+                result = await self.upstream.update_issue(
+                    repo=target_repo,
+                    issue_number=issue_number,
+                    title=formatted["title"],
+                    body=formatted["body"],
+                    labels=formatted.get("labels")
+                )
+            except RemoteError as exc:
+                if exc.status in {404, 410}:
+                    if thread_id:
+                        self.state.delete_thread_issue(thread_id)
+                    is_update = False
+                else:
+                    raise
 
-            if thread_id:
-                self.state.save_thread_issue(thread_id, target_repo, issue_number, issue_url)
+            if is_update:
+                comment_body = formatted.get("comment")
+                if not comment_body:
+                    comment_parts = ["### Update from Discord Thread", "Issue updated with the latest messages/notes from Discord."]
+                    if description and description.strip():
+                        comment_parts.append(f"\n**Maintainer Note:** {description.strip()}")
+                    if extra_messages:
+                        comment_parts.append(f"\n*Incorporated {len(extra_messages)} additional message(s) / screenshot(s).*")
+                    comment_body = "\n".join(comment_parts)
+                comment_body = strip_emojis(comment_body).strip()
 
-            return {
-                "repo": target_repo,
-                "title": formatted["title"],
-                "body": formatted["body"],
-                "labels": result.get("labels") or formatted.get("labels", []),
-                "url": issue_url,
-                "number": issue_number,
-                "action": "updated",
-                "comment": comment_body
-            }
+                try:
+                    await self.upstream.add_issue_comment(target_repo, issue_number, comment_body)
+                except Exception:
+                    pass
+
+                if thread_id:
+                    self.state.save_thread_issue(thread_id, target_repo, issue_number, issue_url)
+
+                return {
+                    "repo": target_repo,
+                    "title": formatted["title"],
+                    "body": formatted["body"],
+                    "labels": result.get("labels") or formatted.get("labels", []),
+                    "url": issue_url,
+                    "number": issue_number,
+                    "action": "updated",
+                    "comment": comment_body
+                }
 
         result = await self.upstream.create_issue(
             repo=target_repo,

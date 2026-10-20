@@ -329,6 +329,25 @@ Closed testing on Windows.
         self.assertEqual(forced["number"], 102)
         self.upstream.create_issue.assert_awaited_once()
 
+        # 4. If update_issue returns 410 (issue deleted on GitHub), seamlessly creates new issue
+        self.upstream.update_issue.side_effect = RemoteError("Gone", status=410)
+        self.upstream.create_issue.reset_mock()
+        self.upstream.create_issue.return_value = {
+            "url": "https://github.com/arthiee4/catui-main/issues/103",
+            "number": 103,
+            "labels": ["bug"]
+        }
+        recovered = await self.service.create_github_issue(
+            thread_title="Bug Report",
+            starter={"author": "User1", "content": "Initial text", "is_admin": False, "images": [], "files": []},
+            thread_id=555666777
+        )
+        self.assertEqual(recovered["action"], "created")
+        self.assertEqual(recovered["number"], 103)
+        self.upstream.create_issue.assert_awaited_once()
+        mapping = self.state.get_thread_issue(555666777)
+        self.assertEqual(mapping["issue_number"], 103)
+
     async def test_owner_tree_permissions_and_admin_delegation(self):
         bot = Bot(self.config)
         bot.discord_io = MagicMock(ready=True, call=AsyncMock())
