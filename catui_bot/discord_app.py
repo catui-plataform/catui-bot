@@ -339,6 +339,33 @@ class OwnerTree(app_commands.CommandTree):
     async def interaction_check(self, interaction):
         if not self.client.discord_io.ready:
             return False
+        if interaction.user.id != self.client.config.owner_id:
+            await self.client.discord_io.call(interaction.response.send_message, "Access denied.", ephemeral=True)
+            return False
+        if interaction.guild_id != self.client.config.guild_id:
+            await self.client.discord_io.call(interaction.response.send_message, "Access denied.", ephemeral=True)
+            return False
+
+        cmd_name = getattr(getattr(interaction, "command", None), "name", "")
+        if cmd_name == "issue":
+            chan = interaction.channel
+            parent_id = getattr(chan, "parent_id", None)
+            is_issue_channel = (
+                interaction.channel_id in (self.client.config.issues_channel_id, self.client.config.channel_id)
+                or parent_id == self.client.config.issues_channel_id
+            )
+            if not is_issue_channel:
+                await self.client.discord_io.call(
+                    interaction.response.send_message,
+                    f"The /issue command is only allowed in the issues gallery channel (<#{self.client.config.issues_channel_id}>) or its posts.",
+                    ephemeral=True
+                )
+                return False
+            return True
+
+        if cmd_name == "release":
+            return True
+
         if self.client.allowed(interaction.user.id, interaction.guild_id, interaction.channel_id):
             return True
         await self.client.discord_io.call(interaction.response.send_message, "Access denied.", ephemeral=True)
@@ -623,6 +650,109 @@ class Bot(discord.Client):
             await self.discord_io.call(interaction.response.defer, ephemeral=True)
             answer = await self.chat(message)
             await self.discord_io.call(interaction.followup.send, embed=card("CATui > assistant", answer), ephemeral=True)
+
+        @self.tree.command(name="issue", description="Create a GitHub issue in arthiee4/catui-main from this gallery thread/post", guild=guild)
+        @app_commands.describe(
+            description="Optional extra details or maintainer notes for the issue",
+            thread="Optional: specify an issue thread if not running directly inside it"
+        )
+        async def issue_cmd(interaction: discord.Interaction, description: str = None, thread: discord.Thread = None):
+            await self.discord_io.call(interaction.response.defer, ephemeral=False)
+            target = thread or (interaction.channel if isinstance(interaction.channel, discord.Thread) else None)
+            if not target:
+                await self.discord_io.call(
+                    interaction.followup.send,
+                    f"Please run this command inside an issue post/thread in <#{self.config.issues_channel_id}>, or pass the thread option.",
+                    ephemeral=True
+                )
+                return
+
+            starter_msg = target.starter_message
+            if starter_msg is None:
+                try:
+                    starter_msg = await self.discord_io.call(target.fetch_message, target.id)
+                except Exception:
+                    try:
+                        async for msg in target.history(limit=1, oldest_first=True):
+                            starter_msg = msg
+                            break
+                    except Exception:
+                        starter_msg = None
+
+            starter_text = starter_msg.content if starter_msg else ""
+            reporter = starter_msg.author.display_name if starter_msg else ""
+            attachments = [a.url for a in starter_msg.attachments] if starter_msg else []
+
+            try:
+                created = await self.service.create_github_issue(
+                    thread_title=target.name,
+                    starter_content=starter_text,
+                    reporter=reporter,
+                    attachments=attachments,
+                    description=description
+                )
+            except RemoteError as exc:
+                if exc.status in {401, 403, 404}:
+                    err_msg = (
+                        f"GitHub returned HTTP {exc.status}. "
+                        f"Please ensure the bot's GITHUB_TOKEN has write access to `{self.config.issues_repo}`."
+                    )
+                else:
+                    err_msg = f"GitHub API error: {exc}"
+                await self.discord_io.call(interaction.followup.send, err_msg, ephemeral=True)
+                return
+            except Exception as exc:
+                await self.discord_io.call(interaction.followup.send, f"Failed to create issue: {exc}", ephemeral=True)
+                return
+
+            labels_str = ", ".join(created["labels"]) if created["labels"] else "none"
+            embed = discord.Embed(
+                title=f"GitHub Issue #{created['number']}",
+                url=created["url"],
+                description=f"**[{created['title']}]({created['url']})**",
+                color=0x57F287
+            )
+            embed.add_field(name="Repository", value=f"`{created['repo']}`", inline=True)
+            embed.add_field(name="Labels", value=f"`{labels_str}`", inline=True)
+            if reporter:
+                embed.add_field(name="Reported by", value=reporter, inline=True)
+
+            view = SafeView(timeout=180)
+            view.add_item(discord.ui.Button(label="View Issue on GitHub", url=created["url"]))
+            await self.discord_io.call(interaction.followup.send, embed=embed, view=view)
+
+        @self.tree.command(name="release", description="Format the latest CATui release into the official announcement template", guild=guild)
+        @app_commands.describe(
+            tag="Optional: release tag to format (defaults to the latest release)",
+            preview="Set to True to preview privately before sending"
+        )
+        async def release_cmd(interaction: discord.Interaction, tag: str = None, preview: bool = False):
+            await self.discord_io.call(interaction.response.defer, ephemeral=preview)
+            try:
+                res = await self.service.get_release_announcement(tag=tag)
+            except Exception as exc:
+                await self.discord_io.call(interaction.followup.send, f"Could not format release: {exc}", ephemeral=True)
+                return
+
+            content = res["announcement"]
+            if preview:
+                view = SafeView(timeout=180)
+                publish_btn = discord.ui.Button(label="Publish to Channel", style=discord.ButtonStyle.success)
+
+                async def publish_callback(btn_interaction: discord.Interaction):
+                    if btn_interaction.user.id != self.config.owner_id:
+                        await self.discord_io.call(btn_interaction.response.send_message, "Access denied.", ephemeral=True)
+                        return
+                    await self.discord_io.call(interaction.channel.send, content)
+                    publish_btn.disabled = True
+                    publish_btn.label = "Published"
+                    await self.discord_io.call(btn_interaction.response.edit_message, view=view)
+
+                publish_btn.callback = publish_callback
+                view.add_item(publish_btn)
+                await self.discord_io.call(interaction.followup.send, content, view=view, ephemeral=True)
+            else:
+                await self.discord_io.call(interaction.followup.send, content, ephemeral=False)
 
         await self.discord_io.call(self.tree.sync, guild=guild)
         for job in self.state.jobs("pending"):

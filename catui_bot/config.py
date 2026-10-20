@@ -8,6 +8,8 @@ BOT_REPO = "catui-plataform/catui-bot"
 CORE_IDS = ("pcsx2", "eden", "rpcs3", "shadps4", "ppsspp", "cemu", "flycast")
 CORE_NAMES = {"pcsx2": "PCSX2", "eden": "Eden", "rpcs3": "RPCS3", "shadps4": "shadPS4",
               "ppsspp": "PPSSPP", "cemu": "Cemu", "flycast": "Flycast"}
+DEFAULT_ISSUES_CHANNEL_ID = 1460650067139756165
+DEFAULT_ISSUES_REPO = "arthiee4/catui-main"
 DEEPSEEK_MODEL = "deepseek-flash"
 
 
@@ -24,6 +26,8 @@ class Config:
     interval: int
     state_path: Path
     updates_enabled: bool
+    issues_channel_id: int = DEFAULT_ISSUES_CHANNEL_ID
+    issues_repo: str = DEFAULT_ISSUES_REPO
 
     @classmethod
     def load(cls):
@@ -42,10 +46,15 @@ class Config:
         key = required("APPROVAL_SIGNING_KEY")
         if len(key) < 32:
             raise ValueError("APPROVAL_SIGNING_KEY must have at least 32 characters")
+        issues_channel_raw = os.environ.get("ISSUES_CHANNEL_ID", "").strip()
+        issues_channel_id = int(issues_channel_raw) if issues_channel_raw.isdigit() else DEFAULT_ISSUES_CHANNEL_ID
+        issues_repo = os.environ.get("ISSUES_REPO", "").strip() or DEFAULT_ISSUES_REPO
         return cls(required("DISCORD_TOKEN"), snowflake("DISCORD_OWNER_ID"),
                    snowflake("DISCORD_GUILD_ID"), snowflake("DISCORD_CHANNEL_ID"),
                    required("GITHUB_TOKEN"), key, os.environ.get("DEEPSEEK_API_KEY", "").strip(),
                    DEEPSEEK_MODEL,
                    max(300, int(os.environ.get("CHECK_INTERVAL_SECONDS", "3600"))),
                    Path(os.environ.get("STATE_PATH", "data/bot.sqlite3")),
-                   os.environ.get("CORE_UPDATES_ENABLED", "true").lower() == "true")
+                   os.environ.get("CORE_UPDATES_ENABLED", "true").lower() == "true",
+                   issues_channel_id,
+                   issues_repo)

@@ -345,3 +345,45 @@ class Service:
                     result = "Automatic recovery stopped. See the diagnostic artifact in the build report."
                 self.state.update(job["id"], result=result)
                 self.state.transition(job["id"], job["status"], following)
+
+
+    async def create_github_issue(self, thread_title, starter_content, reporter=None, attachments=None, description=None, repo=None):
+        target_repo = repo or getattr(self.config, "issues_repo", "arthiee4/catui-main")
+        formatted = await self.assistant.format_issue(
+            thread_title=thread_title,
+            starter_content=starter_content,
+            reporter=reporter,
+            attachments=attachments,
+            description=description
+        )
+        result = await self.upstream.create_issue(
+            repo=target_repo,
+            title=formatted["title"],
+            body=formatted["body"],
+            labels=formatted.get("labels")
+        )
+        return {
+            "repo": target_repo,
+            "title": formatted["title"],
+            "body": formatted["body"],
+            "labels": result.get("labels") or formatted.get("labels", []),
+            "url": result.get("url", ""),
+            "number": result.get("number", 0)
+        }
+
+    async def get_release_announcement(self, tag=None):
+        release = await self.upstream.catui_release(tag=tag)
+        if not release:
+            tag_label = f" for tag '{tag}'" if tag else ""
+            raise ValueError(f"No release found{tag_label}.")
+        announcement = await self.assistant.format_release(
+            tag_name=release["tag"],
+            release_name=release["name"],
+            release_body=release["body"]
+        )
+        return {
+            "announcement": announcement,
+            "tag": release["tag"],
+            "name": release["name"],
+            "url": release["url"]
+        }

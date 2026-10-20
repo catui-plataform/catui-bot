@@ -175,3 +175,42 @@ class Upstream:
             return "Waiting for runner to start preflight"
 
         return "Dispatching workflow to runner"
+
+
+    async def create_issue(self, repo, title, body, labels=None):
+        url = f"https://api.github.com/repos/{repo}/issues"
+        payload = {"title": title, "body": body}
+        if labels:
+            payload["labels"] = list(labels)
+        try:
+            data = await self.http.json(url, method="POST", payload=payload)
+        except RemoteError as exc:
+            if exc.status == 422 and "labels" in payload:
+                payload.pop("labels")
+                data = await self.http.json(url, method="POST", payload=payload)
+            else:
+                raise
+        return {
+            "url": data.get("html_url", ""),
+            "number": data.get("number", 0),
+            "labels": [l.get("name", "") for l in data.get("labels", []) if isinstance(l, dict)]
+        }
+
+    async def catui_release(self, tag=None):
+        if tag:
+            url = f"https://api.github.com/repos/{STORE_REPO}/releases/tags/{quote(tag, safe='')}"
+        else:
+            url = f"https://api.github.com/repos/{STORE_REPO}/releases/latest"
+        try:
+            data = await self.http.json(url)
+        except RemoteError as exc:
+            if exc.status == 404:
+                return None
+            raise
+        return {
+            "tag": str(data.get("tag_name") or ""),
+            "name": str(data.get("name") or data.get("tag_name") or ""),
+            "body": str(data.get("body") or ""),
+            "url": str(data.get("html_url") or ""),
+            "published_at": str(data.get("published_at") or "")
+        }

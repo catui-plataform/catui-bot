@@ -107,7 +107,7 @@ class DiscordIOTests(unittest.IsolatedAsyncioTestCase):
                 bot.send_updates = AsyncMock()
                 interaction = SimpleNamespace(response=SimpleNamespace(defer=AsyncMock()), followup=SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(id=56789))))
                 commands = bot.tree.get_commands(guild=discord.Object(id=config.guild_id))
-                self.assertEqual({c.name for c in commands}, {"cores-check", "cores-panel", "chat"})
+                self.assertEqual({c.name for c in commands}, {"cores-check", "cores-panel", "chat", "issue", "release"})
                 panel = next(c for c in commands if c.name == "cores-panel")
                 panel_interaction = SimpleNamespace(response=SimpleNamespace(send_message=AsyncMock()))
                 await panel.callback(panel_interaction)
