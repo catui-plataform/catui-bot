@@ -69,11 +69,11 @@ class IssueAndReleaseLLMTests(unittest.TestCase):
     def test_canonicalize_labels(self):
         from catui_bot.llm import canonicalize_labels
         # Direct canonical tags
-        self.assertEqual(canonicalize_labels(["catui", "cores", "seamless", "compat", "bug", "enhancement"]),
-                         ["catui", "cores", "seamless", "compat", "bug", "enhancement"])
+        self.assertEqual(canonicalize_labels(["catui", "core", "seamless", "compat", "bug", "enhancement"]),
+                         ["catui", "core", "seamless", "compat", "bug", "enhancement"])
         # Aliases mapped
         self.assertEqual(canonicalize_labels(["ui", "interface", "menu"]), ["catui"])
-        self.assertEqual(canonicalize_labels(["pcsx2", "libretro", "emulator"]), ["cores"])
+        self.assertEqual(canonicalize_labels(["pcsx2", "libretro", "emulator"]), ["core"])
         self.assertEqual(canonicalize_labels(["runtime"]), ["seamless"])
         self.assertEqual(canonicalize_labels(["compatibility", "roms", "game"]), ["compat"])
         self.assertEqual(canonicalize_labels(["crash", "error", "glitch"]), ["bug"])
@@ -81,6 +81,10 @@ class IssueAndReleaseLLMTests(unittest.TestCase):
         # Fallback for empty or unknown
         self.assertEqual(canonicalize_labels(["unknown_tag_xyz"]), ["catui", "bug"])
         self.assertEqual(canonicalize_labels([]), ["catui", "bug"])
+        # Prioritize thread tags from Discord forum
+        self.assertEqual(canonicalize_labels(["bug"], thread_tags=["catui", "core"]), ["catui", "core"])
+        self.assertEqual(canonicalize_labels([], thread_tags=["compat", "solved"]), ["compat"])
+        self.assertEqual(canonicalize_labels(["bug"], thread_tags=["solved"]), ["bug"])
 
     def test_fallback_issue_with_multi_messages_and_roles(self):
         starter = {
@@ -488,6 +492,31 @@ Closed testing on Windows.
             state_reason="completed"
         )
 
+        # 6. Service create_github_issue passes thread_tags
+        self.assistant.format_issue.reset_mock()
+        self.assistant.format_issue.return_value = {
+            "title": "Bug Report",
+            "body": "Body",
+            "labels": ["catui", "core"]
+        }
+        await self.service.create_github_issue(
+            thread_title="Core Crash",
+            starter={"author": "User1", "content": "Text", "is_admin": False, "images": [], "files": []},
+            thread_tags=["catui", "core"],
+            new=True
+        )
+        self.assistant.format_issue.assert_awaited_once_with(
+            thread_title="Core Crash",
+            starter={"author": "User1", "content": "Text", "is_admin": False, "images": [], "files": []},
+            extra_messages=None,
+            reporter=None,
+            attachments=None,
+            description=None,
+            is_update=False,
+            solved=False,
+            thread_tags=["catui", "core"]
+        )
+
     async def test_owner_tree_permissions_and_admin_delegation(self):
         bot = Bot(self.config)
         bot.discord_io = MagicMock(ready=True, call=AsyncMock())
@@ -554,6 +583,88 @@ Closed testing on Windows.
             self.assertTrue(await tree.interaction_check(interaction_owner_admin_add))
 
         finally:
+            bot.state.close()
+
+    async def test_issue_cmd_auto_applies_solved_tag(self):
+        class MockHistory:
+            def __init__(self, messages):
+                self.messages = messages
+            def __aiter__(self):
+                self._iter = iter(self.messages)
+                return self
+            async def __anext__(self):
+                try:
+                    return next(self._iter)
+                except StopIteration:
+                    raise StopAsyncIteration
+
+        bot = Bot(self.config)
+        try:
+            bot.monitor = MagicMock()
+            async def fake_call(fn, *args, **kwargs):
+                if fn == bot.tree.sync:
+                    return None
+                res = fn(*args, **kwargs)
+                if asyncio.iscoroutine(res):
+                    return await res
+                return res
+            bot.discord_io = MagicMock(ready=True, call=AsyncMock(side_effect=fake_call))
+            bot.private_ready = True
+            await bot.setup_hook()
+
+            guild = discord.Object(id=self.config.guild_id)
+            cmd = bot.tree.get_command("issue", guild=guild) or bot.tree.get_command("issue")
+
+            solved_tag = SimpleNamespace(id=10, name="solved")
+            core_tag = SimpleNamespace(id=11, name="core")
+            parent = SimpleNamespace(id=DEFAULT_ISSUES_CHANNEL_ID, available_tags=[solved_tag, core_tag])
+            target = SimpleNamespace(
+                id=555666777,
+                name="Crash in PCSX2",
+                type=discord.ChannelType.public_thread,
+                parent=parent,
+                applied_tags=[core_tag],
+                starter_message=SimpleNamespace(
+                    id=555666777,
+                    author=SimpleNamespace(id=123, display_name="User1"),
+                    content="Core crashed",
+                    attachments=[]
+                ),
+                edit=AsyncMock(),
+                history=lambda limit=50: MockHistory([])
+            )
+
+            bot.service.create_github_issue = AsyncMock(return_value={
+                "repo": "arthiee4/catui-main",
+                "title": "Crash in PCSX2",
+                "body": "Fixed",
+                "labels": ["core"],
+                "url": "https://github.com/arthiee4/catui-main/issues/999",
+                "number": 999,
+                "action": "solved"
+            })
+
+            interaction = SimpleNamespace(
+                guild_id=self.config.guild_id,
+                channel=target,
+                response=SimpleNamespace(defer=AsyncMock()),
+                followup=SimpleNamespace(send=AsyncMock())
+            )
+
+            await cmd.callback(interaction, message="solved", new=False, solved=True)
+            target.edit.assert_awaited_once_with(applied_tags=[core_tag, solved_tag])
+
+            # Also verify running without solved=True on an already-tagged thread recognizes it as solved
+            bot.service.create_github_issue.reset_mock()
+            target.edit.reset_mock()
+            target.applied_tags = [core_tag, solved_tag]
+            await cmd.callback(interaction, message="status check", new=False, solved=False)
+            bot.service.create_github_issue.assert_awaited_once()
+            self.assertTrue(bot.service.create_github_issue.call_args.kwargs["solved"])
+            target.edit.assert_not_called()
+        finally:
+            if hasattr(bot, "session") and not bot.session.closed:
+                await bot.session.close()
             bot.state.close()
 
     def test_fallback_issue_update_mode(self):

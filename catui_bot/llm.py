@@ -40,7 +40,7 @@ def strip_emojis(text):
     return EMOJI_PATTERN.sub("", str(text)).strip()
 
 
-CANONICAL_LABELS = ("catui", "cores", "seamless", "compat", "bug", "enhancement")
+CANONICAL_LABELS = ("catui", "core", "cores", "seamless", "compat", "bug", "enhancement")
 
 LABEL_MAPPINGS = {
     # catui UI mappings
@@ -60,13 +60,13 @@ LABEL_MAPPINGS = {
     "controller": "catui",
     "input": "catui",
     # cores mappings
-    "core": "cores",
-    "cores": "cores",
-    "emulator": "cores",
-    "emulators": "cores",
-    "libretro": "cores",
-    "pcsx2": "cores",
-    "retroarch": "cores",
+    "core": "core",
+    "cores": "core",
+    "emulator": "core",
+    "emulators": "core",
+    "libretro": "core",
+    "pcsx2": "core",
+    "retroarch": "core",
     # seamless mappings
     "seamless": "seamless",
     "runtime": "seamless",
@@ -104,21 +104,41 @@ def sanitize_labels(labels):
     return cleaned if cleaned else ["bug"]
 
 
-def canonicalize_labels(labels):
-    if not isinstance(labels, (list, tuple)):
+def canonicalize_labels(labels, thread_tags=None):
+    # 1. Prioritize tags authored/applied on the Discord thread
+    if thread_tags:
+        applied = []
+        for t in thread_tags:
+            if not isinstance(t, str):
+                continue
+            cleaned = strip_emojis(t).lower().strip()
+            tag = re.sub(r"[^a-z0-9\-_]+", "", cleaned)
+            if tag in ("solved", "resolvido"):
+                continue
+            canonical = LABEL_MAPPINGS.get(tag, tag if tag in CANONICAL_LABELS else None)
+            if canonical and canonical in CANONICAL_LABELS and canonical not in applied:
+                applied.append(canonical)
+        if applied:
+            return applied
+
+    # 2. Add labels from input/LLM
+    result = []
+    if isinstance(labels, (list, tuple)):
+        for l in labels:
+            if not isinstance(l, str):
+                continue
+            cleaned = strip_emojis(l).lower().strip()
+            tag = re.sub(r"[^a-z0-9\-_]+", "", cleaned)
+            if tag in ("solved", "resolvido"):
+                continue
+            canonical = LABEL_MAPPINGS.get(tag, tag if tag in CANONICAL_LABELS else None)
+            if canonical and canonical in CANONICAL_LABELS and canonical not in result:
+                result.append(canonical)
+
+    if not result:
         return ["catui", "bug"]
-    cleaned = []
-    for l in labels:
-        if not isinstance(l, str):
-            continue
-        no_emoji = strip_emojis(l).lower().strip()
-        tag = re.sub(r"[^a-z0-9\-_]+", "", no_emoji)
-        canonical = LABEL_MAPPINGS.get(tag, tag if tag in CANONICAL_LABELS else None)
-        if canonical and canonical in CANONICAL_LABELS and canonical not in cleaned:
-            cleaned.append(canonical)
-    if not cleaned:
-        cleaned = ["catui", "bug"]
-    return cleaned
+
+    return result
 
 
 def format_quote(author, role, content):
@@ -246,7 +266,7 @@ def build_issue_body(summary=None, details=None, extra_messages=None, attachment
 
     maintainer_section = []
     if desc_clean:
-        maintainer_section.append(desc_clean)
+        maintainer_section.append(f"> **Maintainer Note:** {desc_clean}")
     if admin_quotes:
         maintainer_section.extend(admin_quotes)
 
@@ -413,7 +433,7 @@ class Assistant:
                            "prerelease": release["prerelease"], "description": release["body"][:10000]})
         return await self.request(system, data, 220)
 
-    async def format_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, is_update=False, solved=False):
+    async def format_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, is_update=False, solved=False, thread_tags=None):
         if is_update:
             system = (
                 "You are an expert GitHub issue assistant for CATui (a modern emulator frontend built in Godot).\n"
@@ -421,7 +441,7 @@ class Assistant:
                 "RULES:\n"
                 "1. Output MUST be valid JSON with keys: 'body', 'labels'.\n"
                 "2. 'body': The consolidated, updated issue description. Keep existing facts and incorporate new observations without hallucinating details not present in the input. Strictly NO emojis.\n"
-                "3. 'labels': JSON array of 1 to 3 tags chosen strictly from: 'catui', 'cores', 'seamless', 'compat', 'bug', 'enhancement'. Strictly NO emojis.\n"
+                "3. 'labels': JSON array of 1 to 3 tags chosen strictly from: 'catui', 'core', 'seamless', 'compat', 'bug', 'enhancement'. Strictly NO emojis.\n"
                 "4. Output ONLY raw JSON, without markdown code fences or conversational filler."
             )
         else:
@@ -434,9 +454,9 @@ class Assistant:
                 "3. 'summary': 1 to 2 direct sentences describing the problem or request.\n"
                 "   CRITICAL: NEVER write meta-commentary, complaints, or lectures about missing details (e.g. NEVER write 'The reporter did not include additional technical details...', 'Further information is needed...', 'Logs were not provided'). State only the issue itself plainly.\n"
                 "4. 'details': Any specific steps, environment info, or error messages explicitly present in the input, or empty string if none. Strictly NO emojis.\n"
-                "5. 'labels': JSON array of 1 to 3 tags chosen strictly from: 'catui', 'cores', 'seamless', 'compat', 'bug', 'enhancement'.\n"
+                "5. 'labels': JSON array of 1 to 3 tags chosen strictly from: 'catui', 'core', 'seamless', 'compat', 'bug', 'enhancement'.\n"
                 "   - 'catui': Interface, frontend UI, menus, settings, themes, audio/artwork in UI, or CATui itself.\n"
-                "   - 'cores': Emulator cores (e.g. PCSX2, libretro cores, core execution/downloading).\n"
+                "   - 'core': Emulator cores (e.g. PCSX2, libretro cores, core execution/downloading).\n"
                 "   - 'seamless': Seamless runtime, seamless switching, or seamless execution.\n"
                 "   - 'compat': Game compatibility, specific ROM behavior, or format support.\n"
                 "   - 'bug': For any crash, bug, error, or defect.\n"
@@ -502,7 +522,7 @@ class Assistant:
             parsed = json.loads(raw_clean)
             if isinstance(parsed, dict):
                 title = strip_emojis(thread_title).strip() if is_update else (strip_emojis(parsed.get("title", "")).strip() or strip_emojis(thread_title).strip())
-                labels = canonicalize_labels(parsed.get("labels"))
+                labels = canonicalize_labels(parsed.get("labels"), thread_tags=thread_tags)
 
                 if is_update:
                     body = strip_emojis(parsed.get("body", "")).strip()
@@ -554,10 +574,10 @@ class Assistant:
         except Exception as exc:
             log.warning("DeepSeek issue formatting failed, using fallback: %s", type(exc).__name__)
 
-        return self.fallback_issue(thread_title, starter, extra_messages, reporter, attachments, description, is_update=is_update, solved=solved)
+        return self.fallback_issue(thread_title, starter, extra_messages, reporter, attachments, description, is_update=is_update, solved=solved, thread_tags=thread_tags)
 
     @staticmethod
-    def fallback_issue(thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, is_update=False, solved=False):
+    def fallback_issue(thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, is_update=False, solved=False, thread_tags=None):
         title = strip_emojis(thread_title).strip() or "Issue Report from Discord"
         body = build_issue_body(
             summary=None,
@@ -571,7 +591,7 @@ class Assistant:
         res = {
             "title": title,
             "body": body,
-            "labels": ["bug"]
+            "labels": canonicalize_labels(["bug"], thread_tags=thread_tags)
         }
         if is_update:
             res["comment"] = build_update_comment(description, extra_messages, attachments, solved=solved)

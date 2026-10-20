@@ -896,7 +896,15 @@ class Bot(discord.Client):
             # Parse message input (separates message IDs/links, direct images, and text notes)
             msg_refs, parsed_images, note_text = parse_message_inputs(message)
             all_direct_attachments = list(parsed_images)
+
+            # Extract tags from the Discord thread (forum post)
+            thread_tag_objects = getattr(target, "applied_tags", []) or []
+            thread_tags = [t.name for t in thread_tag_objects if hasattr(t, "name")]
+            thread_tags_lower = [t.lower().strip() for t in thread_tags]
+
             is_solved = bool(solved)
+            if not is_solved and ("solved" in thread_tags_lower or "resolvido" in thread_tags_lower):
+                is_solved = True
             if not is_solved and note_text:
                 note_lower = note_text.lower().strip()
                 if note_lower in ("solved", "--solved"):
@@ -972,7 +980,8 @@ class Bot(discord.Client):
                     thread_id=target.id,
                     new=new,
                     existing_issue=existing,
-                    solved=is_solved
+                    solved=is_solved,
+                    thread_tags=thread_tags
                 )
             except RemoteError as exc:
                 if exc.status == 410:
@@ -1039,14 +1048,22 @@ class Bot(discord.Client):
             view.add_item(discord.ui.Button(label="View Issue (Admin Only)", url=created["url"]))
             await self.discord_io.call(interaction.followup.send, embed=embed, view=view)
 
-            if is_action_solved and hasattr(target, "parent") and hasattr(target.parent, "available_tags") and hasattr(target, "applied_tags"):
+            if is_action_solved and hasattr(target, "applied_tags"):
                 try:
-                    solved_tag = next((t for t in target.parent.available_tags if t.name.lower() in ("solved", "resolvido", "fechado")), None)
-                    if solved_tag and solved_tag not in target.applied_tags:
-                        new_tags = list(target.applied_tags) + [solved_tag]
-                        await self.discord_io.call(target.edit, applied_tags=new_tags)
-                except Exception:
-                    pass
+                    parent_channel = getattr(target, "parent", None)
+                    if not parent_channel and hasattr(target, "parent_id") and target.parent_id:
+                        parent_channel = self.get_channel(target.parent_id)
+                        if not parent_channel:
+                            parent_channel = await self.discord_io.call(self.fetch_channel, target.parent_id)
+                    if parent_channel and hasattr(parent_channel, "available_tags"):
+                        solved_tag = next((t for t in parent_channel.available_tags if t.name.lower().strip() in ("solved", "resolvido", "fechado")), None)
+                        if solved_tag and solved_tag not in target.applied_tags:
+                            new_tags = list(target.applied_tags) + [solved_tag]
+                            if len(new_tags) > 5:
+                                new_tags = new_tags[-5:]
+                            await self.discord_io.call(target.edit, applied_tags=new_tags)
+                except Exception as exc:
+                    log.warning("Could not auto-apply solved tag on Discord thread: %s", exc)
 
         @self.tree.command(name="release", description="Format the latest CATui release into the official announcement template", guild=guild)
         @app_commands.describe(

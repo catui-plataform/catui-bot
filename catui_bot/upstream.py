@@ -9,6 +9,7 @@ from .http import RemoteError
 
 CANONICAL_GITHUB_LABELS = [
     {"name": "catui", "color": "5319e7", "description": "CATui frontend, UI, menus, themes and settings"},
+    {"name": "core", "color": "006b75", "description": "Emulator cores and libretro integration"},
     {"name": "cores", "color": "006b75", "description": "Emulator cores and libretro integration"},
     {"name": "seamless", "color": "0e8a16", "description": "Seamless runtime and execution"},
     {"name": "compat", "color": "fbca04", "description": "Game compatibility and ROM loading"},
