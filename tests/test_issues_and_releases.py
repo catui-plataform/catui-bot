@@ -224,6 +224,33 @@ class IssueAndReleaseAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("another test", result.get("comment", ""))
         self.assertEqual(result["title"], "Sound crackles on PCSX2")
 
+    async def test_assistant_format_issue_guarantees_notes_and_messages(self):
+        llm_response = json.dumps({
+            "title": "Bug Title",
+            "body": "## Summary\nInitial summary.",
+            "labels": ["bug"],
+            "comment": "Short comment from LLM."
+        })
+        self.http.json = AsyncMock(return_value={
+            "choices": [{"message": {"content": f"```json\n{llm_response}\n```"}}]
+        })
+        extra_messages = [
+            {"id": 111, "author": "Tester", "content": "I reproduced this!", "is_admin": False, "images": []},
+            {"id": 222, "author": "Admin", "content": "Checking logs now", "is_admin": True, "images": [{"filename": "log.png", "url": "https://cdn.discord.com/log.png"}]}
+        ]
+        result = await self.assistant.format_issue(
+            thread_title="Sound crackles on PCSX2",
+            starter={"author": "User1", "content": "Audio crackles", "images": [], "files": []},
+            extra_messages=extra_messages,
+            description="sounds like a runtime errorr",
+            is_update=True
+        )
+        self.assertIn("sounds like a runtime errorr", result["comment"])
+        self.assertIn("sounds like a runtime errorr", result["body"])
+        self.assertIn("I reproduced this!", result["comment"])
+        self.assertIn("Checking logs now", result["comment"])
+        self.assertIn("![log.png](https://cdn.discord.com/log.png)", result["comment"])
+
     async def test_assistant_format_release_with_llm(self):
         expected_announcement = """```yaml
 # CATUI | BUILD ZERO (0.1.1)

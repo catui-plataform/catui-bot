@@ -238,6 +238,37 @@ class Assistant:
                             log.warning("Detected hallucination '%s' in DeepSeek update comment, using fallback", forbidden)
                             return self.fallback_issue(thread_title, starter, extra_messages, reporter, attachments, description, is_update=is_update)
 
+                # Ensure maintainer note is included
+                if description and description.strip():
+                    desc_clean = strip_emojis(description).strip()
+                    if is_update and desc_clean.lower() not in comment.lower():
+                        comment = f"{comment}\n\n**Maintainer Note:** {desc_clean}" if comment else f"**Maintainer Note:** {desc_clean}"
+                    if desc_clean.lower() not in body.lower():
+                        body = f"{body}\n\n## Maintainer Notes\n{desc_clean}"
+
+                # Ensure all extra messages and images are included
+                if extra_messages:
+                    for em in extra_messages:
+                        content = strip_emojis(em.get("content", "")).strip()
+                        author = strip_emojis(em.get("author", "User"))
+                        role = "Maintainer" if em.get("is_admin") else "User"
+                        if content:
+                            quote = f"> **@{author} ({role}):** {content}"
+                            if is_update and content.lower() not in comment.lower():
+                                comment = f"{comment}\n\n{quote}" if comment else quote
+                            if content.lower() not in body.lower():
+                                if "## User Reports & Comments" not in body and not em.get("is_admin"):
+                                    body = f"{body}\n\n## User Reports & Comments"
+                                body = f"{body}\n{quote}"
+                        for img in em.get("images", []):
+                            u = img.get("url")
+                            fn = strip_emojis(img.get("filename", "Screenshot"))
+                            tag = f"![{fn}]({u})"
+                            if is_update and u not in comment:
+                                comment = f"{comment}\n\n{tag}" if comment else tag
+                            if u not in body:
+                                body = f"{body}\n\n{tag}"
+
                 res = {"title": title, "body": body, "labels": labels}
                 if comment:
                     res["comment"] = comment
@@ -331,6 +362,10 @@ class Assistant:
                 comment_parts.append(f"**Maintainer Note:** {strip_emojis(description).strip()}")
             if user_comments:
                 comment_parts.append("**User Comments:**\n" + "\n".join(user_comments))
+            if admin_notes:
+                admin_quotes = [n for n in admin_notes if n != strip_emojis(description).strip()]
+                if admin_quotes:
+                    comment_parts.append("**Maintainer Messages:**\n" + "\n".join(admin_quotes))
             if media_lines:
                 comment_parts.append("**Screenshots & Attachments:**\n" + "\n".join(media_lines))
             res["comment"] = "\n\n".join(comment_parts)

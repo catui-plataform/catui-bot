@@ -900,8 +900,6 @@ class Bot(discord.Client):
             for ref in msg_refs:
                 mid = ref["message_id"]
                 cid = ref.get("channel_id")
-                if starter_msg and mid == starter_msg.id:
-                    continue
                 m = None
                 if cid:
                     try:
