@@ -652,16 +652,16 @@ Closed testing on Windows.
             )
 
             await cmd.callback(interaction, message="solved", new=False, solved=True)
-            target.edit.assert_awaited_once_with(applied_tags=[core_tag, solved_tag])
+            target.edit.assert_awaited_once_with(applied_tags=[core_tag, solved_tag], locked=True, archived=True)
 
-            # Also verify running without solved=True on an already-tagged thread recognizes it as solved
+            # Also verify running without solved=True on an already-tagged thread recognizes it as solved and locks/archives it
             bot.service.create_github_issue.reset_mock()
             target.edit.reset_mock()
             target.applied_tags = [core_tag, solved_tag]
             await cmd.callback(interaction, message="status check", new=False, solved=False)
             bot.service.create_github_issue.assert_awaited_once()
             self.assertTrue(bot.service.create_github_issue.call_args.kwargs["solved"])
-            target.edit.assert_not_called()
+            target.edit.assert_awaited_once_with(locked=True, archived=True)
         finally:
             if hasattr(bot, "session") and not bot.session.closed:
                 await bot.session.close()
