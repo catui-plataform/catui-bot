@@ -312,7 +312,7 @@ Closed testing on Windows.
         self.upstream.update_issue.assert_awaited_once()
         self.upstream.add_issue_comment.assert_awaited_once()
 
-        # 3. Running with force_new creates a brand new issue
+        # 3. Running with new=True (or force_new=True) creates a brand new issue
         self.upstream.create_issue.reset_mock()
         self.upstream.create_issue.return_value = {
             "url": "https://github.com/arthiee4/catui-main/issues/102",
@@ -323,7 +323,7 @@ Closed testing on Windows.
             thread_title="Bug Report",
             starter={"author": "User1", "content": "Initial text", "is_admin": False, "images": [], "files": []},
             thread_id=555666777,
-            force_new=True
+            new=True
         )
         self.assertEqual(forced["action"], "created")
         self.assertEqual(forced["number"], 102)

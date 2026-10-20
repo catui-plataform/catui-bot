@@ -347,9 +347,10 @@ class Service:
                 self.state.transition(job["id"], job["status"], following)
 
 
-    async def create_github_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, repo=None, thread_id=None, force_new=False, existing_issue=None):
+    async def create_github_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, repo=None, thread_id=None, new=False, force_new=False, existing_issue=None):
         target_repo = repo or getattr(self.config, "issues_repo", "arthiee4/catui-main")
-        existing = existing_issue or (self.state.get_thread_issue(thread_id) if (thread_id and not force_new) else None)
+        is_new = new or force_new
+        existing = existing_issue or (self.state.get_thread_issue(thread_id) if (thread_id and not is_new) else None)
         is_update = bool(existing and existing.get("repo") == target_repo)
 
         formatted = await self.assistant.format_issue(

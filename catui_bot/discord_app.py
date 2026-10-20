@@ -827,7 +827,7 @@ class Bot(discord.Client):
             attachment="Optional: screenshot or file to attach to the issue/update",
             attachment2="Optional: second screenshot or file to attach",
             attachment3="Optional: third screenshot or file to attach",
-            force_new="Set to True to force creating a new issue instead of updating the existing one for this thread",
+            new="Set to True to create a new issue instead of updating the existing one for this thread",
             thread="Optional: specify an issue thread if not running directly inside it"
         )
         async def issue_cmd(
@@ -838,7 +838,7 @@ class Bot(discord.Client):
             attachment: discord.Attachment = None,
             attachment2: discord.Attachment = None,
             attachment3: discord.Attachment = None,
-            force_new: bool = False,
+            new: bool = False,
             thread: discord.Thread = None
         ):
             await self.discord_io.call(interaction.response.defer, ephemeral=False)
@@ -884,7 +884,7 @@ class Bot(discord.Client):
             # Check existing issue for this thread (SQLite first, then scan thread history fallback)
             target_repo = self.config.issues_repo
             existing = None
-            if not force_new:
+            if not new:
                 existing = self.state.get_thread_issue(target.id)
                 if not existing:
                     existing = await find_existing_issue_in_thread(target, target_repo)
@@ -964,7 +964,7 @@ class Bot(discord.Client):
                     attachments=all_direct_attachments,
                     description=description,
                     thread_id=target.id,
-                    force_new=force_new,
+                    new=new,
                     existing_issue=existing
                 )
             except RemoteError as exc:
