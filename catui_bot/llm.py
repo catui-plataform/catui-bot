@@ -54,6 +54,152 @@ def sanitize_labels(labels):
     return cleaned if cleaned else ["bug"]
 
 
+def format_quote(author, role, content):
+    clean = strip_emojis(content).strip()
+    if not clean:
+        return ""
+    author_clean = strip_emojis(author).lstrip("@#").strip() or "User"
+    role_clean = "Maintainer" if role in ("Maintainer", "Admin") else "User"
+    lines = clean.splitlines()
+    header = f"> **#{author_clean} ({role_clean}):** {lines[0]}"
+    body_lines = [f"> {line}" if line.strip() else ">" for line in lines[1:]]
+    return "\n".join([header] + body_lines)
+
+
+def clean_summary_text(text):
+    if not text:
+        return ""
+    cleaned = strip_emojis(text).strip()
+    cleaned = re.sub(r"^#+\s*Summary\s*", "", cleaned, flags=re.IGNORECASE).strip()
+    sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+    kept_sentences = []
+    for s in sentences:
+        s_clean = s.strip()
+        if not s_clean:
+            continue
+        lower = s_clean.lower()
+        if any(phrase in lower for phrase in (
+            "the reporter did not include",
+            "further information is needed",
+            "further details are needed",
+            "no additional technical details",
+            "reproduction steps or logs in the original report",
+            "needed to investigate the crash",
+            "logs are not provided",
+            "logs were not provided",
+            "please provide more details",
+            "more information is required",
+        )):
+            continue
+        kept_sentences.append(s_clean)
+    return " ".join(kept_sentences).strip()
+
+
+def build_issue_body(summary=None, details=None, extra_messages=None, attachments=None, description=None, starter=None, reporter=None):
+    body_parts = []
+
+    clean_sum = clean_summary_text(summary)
+    if not clean_sum:
+        starter_text = starter.get("content", "").strip() if isinstance(starter, dict) else str(starter or "").strip()
+        clean_sum = clean_summary_text(starter_text) or "Issue reported from Discord."
+    body_parts.extend(["## Summary", clean_sum])
+
+    clean_det = clean_summary_text(details)
+    if clean_det:
+        body_parts.extend(["", "## Details & Reproduction", clean_det])
+
+    user_quotes = []
+    admin_quotes = []
+    all_imgs = []
+    all_files = []
+    seen_texts = set()
+
+    desc_clean = strip_emojis(description).strip() if description else ""
+    if desc_clean:
+        seen_texts.add(desc_clean.lower())
+
+    if isinstance(starter, dict):
+        for img in starter.get("images", []):
+            all_imgs.append(img)
+        for f in starter.get("files", []):
+            all_files.append(f)
+
+    if extra_messages:
+        for em in extra_messages:
+            content = strip_emojis(em.get("content", "")).strip()
+            author = strip_emojis(em.get("author", "User")).lstrip("@#").strip() or "User"
+            role = "Maintainer" if em.get("is_admin") else "User"
+            if content:
+                content_lower = content.lower()
+                if content_lower not in seen_texts:
+                    seen_texts.add(content_lower)
+                    quote = format_quote(author, role, content)
+                    if em.get("is_admin"):
+                        admin_quotes.append(quote)
+                    else:
+                        user_quotes.append(quote)
+            for img in em.get("images", []):
+                all_imgs.append(img)
+            for f in em.get("files", []):
+                all_files.append(f)
+
+    if attachments:
+        for a in attachments:
+            if isinstance(a, dict):
+                fn = a.get("filename", "Attachment")
+                u = a.get("url", "")
+            else:
+                fn = str(a).split("/")[-1].split("?")[0] or "Attachment"
+                u = str(a)
+            if any(fn.lower().endswith(e) for e in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")):
+                all_imgs.append({"filename": fn, "url": u})
+            else:
+                all_files.append({"filename": fn, "url": u})
+
+    if user_quotes:
+        body_parts.extend(["", "## User Reports & Comments", *user_quotes])
+
+    media_lines = []
+    seen_urls = set()
+    for img in all_imgs:
+        u = img.get("url")
+        if u and u not in seen_urls:
+            seen_urls.add(u)
+            fn = strip_emojis(img.get("filename", "Screenshot"))
+            media_lines.append(f"![{fn}]({u})")
+    for f in all_files:
+        u = f.get("url")
+        if u and u not in seen_urls:
+            seen_urls.add(u)
+            fn = strip_emojis(f.get("filename", "File"))
+            media_lines.append(f"- [{fn}]({u})")
+
+    if media_lines:
+        body_parts.extend(["", "## Screenshots & Attachments", *media_lines])
+
+    maintainer_section = []
+    if desc_clean:
+        maintainer_section.append(desc_clean)
+    if admin_quotes:
+        maintainer_section.extend(admin_quotes)
+
+    if maintainer_section:
+        body_parts.extend(["", "## Maintainer Notes", *maintainer_section])
+
+    context_lines = []
+    if isinstance(starter, dict) and starter.get("author"):
+        role = "Admin" if starter.get("is_admin") else "User"
+        author_clean = strip_emojis(starter['author']).lstrip("@#").strip() or "User"
+        context_lines.append(f"- Reported by: #{author_clean} ({role})")
+    elif reporter:
+        author_clean = strip_emojis(reporter).lstrip("@#").strip() or "User"
+        context_lines.append(f"- Reported by: #{author_clean}")
+    if context_lines:
+        body_parts.extend(["", "## Context", *context_lines])
+
+    return "\n".join(body_parts)
+
+
 def build_update_comment(description=None, extra_messages=None, attachments=None):
     comment_parts = ["### Update from Discord Thread"]
     seen_texts = set()
@@ -76,7 +222,7 @@ def build_update_comment(description=None, extra_messages=None, attachments=None
                 content_lower = content.lower()
                 if content_lower not in seen_texts:
                     seen_texts.add(content_lower)
-                    quotes.append(f"> **#{author} ({role}):** {content}")
+                    quotes.append(format_quote(author, role, content))
             for img in em.get("images", []):
                 u = img.get("url")
                 if u and u not in seen_urls:
@@ -210,21 +356,16 @@ class Assistant:
             )
         else:
             system = (
-                "You are an expert GitHub issue organizer for CATui (a modern emulator frontend and launcher built in Godot).\n"
-                "Convert this Discord bug report or feature request into a clean, simplified, well-structured GitHub issue.\n"
+                "You are an expert GitHub issue organizer for CATui (a modern emulator frontend built in Godot).\n"
+                "Convert this Discord report into a concise technical summary and reproduction details.\n"
                 "RULES:\n"
-                "1. Output MUST be valid JSON with exactly these keys: 'title', 'body', 'labels'.\n"
-                "2. 'title': A concise, clear summary of the issue. Plain text only. Strictly NO emojis.\n"
-                "3. 'body': Clean, well-structured GitHub markdown. Strictly NO emojis anywhere in the body.\n"
-                "   Structure the body cleanly:\n"
-                "   - ## Summary: Clear description of the problem or feature request.\n"
-                "   - ## Details & Reproduction: Steps, observed vs expected behavior, environment info.\n"
-                "   - ## User Reports & Comments: If there are comments/reports from users, include their quotes or observations. Use #username (not @username) to avoid pinging anyone on GitHub.\n"
-                "   - ## Screenshots & Attachments: Embed screenshots visually using ![filename](url). List logs/other files as [filename](url).\n"
-                "   - ## Maintainer Notes: Any notes/observations from admins or maintainer notes passed in the prompt.\n"
-                "4. 'labels': JSON array of 1 to 4 clean, appropriate lowercase tags (e.g. ['bug', 'ui'], ['enhancement'], ['crash'], ['audio'], ['input']). Strictly NO emojis.\n"
-                "5. Do NOT invent reproduction steps or logs not present in the input. Keep it simplified and factual.\n"
-                "6. Output ONLY raw JSON, without markdown formatting or conversational filler."
+                "1. Output MUST be valid JSON with keys: 'title', 'summary', 'details', 'labels'.\n"
+                "2. 'title': A concise, technical summary title. Plain text only. Strictly NO emojis.\n"
+                "3. 'summary': 1 to 2 direct sentences describing the problem or request.\n"
+                "   CRITICAL: NEVER write meta-commentary, complaints, or lectures about missing details (e.g. NEVER write 'The reporter did not include additional technical details...', 'Further information is needed...', 'Logs were not provided'). State only the issue itself plainly.\n"
+                "4. 'details': Any specific steps, environment info, or error messages explicitly present in the input, or empty string if none. Strictly NO emojis.\n"
+                "5. 'labels': JSON array of 1 to 4 clean lowercase tags. Strictly NO emojis.\n"
+                "6. Output ONLY raw JSON, without markdown code fences or conversational filler."
             )
         if isinstance(starter, dict):
             starter_data = dict(starter)
@@ -282,40 +423,57 @@ class Assistant:
             elif "{" in raw_clean and "}" in raw_clean:
                 raw_clean = raw_clean[raw_clean.find("{"):raw_clean.rfind("}") + 1]
             parsed = json.loads(raw_clean)
-            if isinstance(parsed, dict) and "body" in parsed:
+            if isinstance(parsed, dict):
                 title = strip_emojis(thread_title).strip() if is_update else (strip_emojis(parsed.get("title", "")).strip() or strip_emojis(thread_title).strip())
-                body = strip_emojis(parsed["body"]).strip()
                 labels = sanitize_labels(parsed.get("labels"))
 
-                # Ensure maintainer note is included in body
-                if description and description.strip():
-                    desc_clean = strip_emojis(description).strip()
-                    if desc_clean.lower() not in body.lower():
-                        body = f"{body}\n\n## Maintainer Notes\n{desc_clean}"
-
-                # Ensure all extra messages and images are included in body
-                if extra_messages:
-                    for em in extra_messages:
-                        content = strip_emojis(em.get("content", "")).strip()
-                        author = strip_emojis(em.get("author", "User")).lstrip("@#").strip() or "User"
-                        role = "Maintainer" if em.get("is_admin") else "User"
-                        if content:
-                            quote = f"> **#{author} ({role}):** {content}"
-                            if content.lower() not in body.lower():
-                                if "## User Reports & Comments" not in body and not em.get("is_admin"):
-                                    body = f"{body}\n\n## User Reports & Comments"
-                                body = f"{body}\n{quote}"
-                        for img in em.get("images", []):
-                            u = img.get("url")
-                            fn = strip_emojis(img.get("filename", "Screenshot"))
-                            tag = f"![{fn}]({u})"
-                            if u not in body:
-                                body = f"{body}\n\n{tag}"
-
-                res = {"title": title, "body": body, "labels": labels}
                 if is_update:
-                    res["comment"] = build_update_comment(description, extra_messages, attachments)
-                return res
+                    body = strip_emojis(parsed.get("body", "")).strip()
+                    if description and description.strip():
+                        desc_clean = strip_emojis(description).strip()
+                        if desc_clean.lower() not in body.lower():
+                            body = f"{body}\n\n## Maintainer Notes\n{desc_clean}"
+                    if extra_messages:
+                        for em in extra_messages:
+                            content = strip_emojis(em.get("content", "")).strip()
+                            author = strip_emojis(em.get("author", "User")).lstrip("@#").strip() or "User"
+                            role = "Maintainer" if em.get("is_admin") else "User"
+                            if content:
+                                quote = format_quote(author, role, content)
+                                if content.lower() not in body.lower():
+                                    if "## User Reports & Comments" not in body and not em.get("is_admin"):
+                                        body = f"{body}\n\n## User Reports & Comments"
+                                    body = f"{body}\n{quote}"
+                            for img in em.get("images", []):
+                                u = img.get("url")
+                                fn = strip_emojis(img.get("filename", "Screenshot"))
+                                tag = f"![{fn}]({u})"
+                                if u not in body:
+                                    body = f"{body}\n\n{tag}"
+                    res = {"title": title, "body": body, "labels": labels, "comment": build_update_comment(description, extra_messages, attachments)}
+                    return res
+
+                # New issue creation: build structured body deterministically
+                summary = parsed.get("summary", "")
+                details = parsed.get("details", "")
+                if not summary and parsed.get("body"):
+                    raw_body = strip_emojis(parsed["body"]).strip()
+                    match_sum = re.search(r"##\s*Summary\s*\n(.*?)(?=\n##|\Z)", raw_body, re.DOTALL)
+                    if match_sum:
+                        summary = match_sum.group(1).strip()
+                    else:
+                        summary = raw_body
+
+                body = build_issue_body(
+                    summary=summary,
+                    details=details,
+                    extra_messages=extra_messages,
+                    attachments=attachments,
+                    description=description,
+                    starter=starter_data,
+                    reporter=reporter
+                )
+                return {"title": title, "body": body, "labels": labels}
         except Exception as exc:
             log.warning("DeepSeek issue formatting failed, using fallback: %s", type(exc).__name__)
 
@@ -324,82 +482,18 @@ class Assistant:
     @staticmethod
     def fallback_issue(thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, is_update=False):
         title = strip_emojis(thread_title).strip() or "Issue Report from Discord"
-        body_parts = []
-
-        starter_text = starter.get("content", "").strip() if isinstance(starter, dict) else str(starter).strip()
-        body_parts.extend(["## Summary", strip_emojis(starter_text) or "No initial description provided."])
-
-        user_comments = []
-        admin_notes = []
-        all_imgs = []
-        all_files = []
-        media_lines = []
-
-        if isinstance(starter, dict):
-            for img in starter.get("images", []):
-                all_imgs.append(img)
-            for f in starter.get("files", []):
-                all_files.append(f)
-        if attachments:
-            for a in attachments:
-                if isinstance(a, dict):
-                    fn = a.get("filename", "Attachment")
-                    u = a.get("url", "")
-                else:
-                    fn = str(a).split("/")[-1].split("?")[0] or "Attachment"
-                    u = str(a)
-                if any(fn.lower().endswith(e) for e in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")):
-                    all_imgs.append({"filename": fn, "url": u})
-                else:
-                    all_files.append({"filename": fn, "url": u})
-
-        if extra_messages:
-            for em in extra_messages:
-                author = strip_emojis(em.get("author", "User")).lstrip("@#").strip() or "User"
-                content = strip_emojis(em.get("content", ""))
-                role = "Maintainer" if em.get("is_admin") else "User"
-                if content:
-                    quote = f"> **#{author} ({role}):** {content}"
-                    if em.get("is_admin"):
-                        admin_notes.append(quote)
-                    else:
-                        user_comments.append(quote)
-                for img in em.get("images", []):
-                    all_imgs.append(img)
-                for f in em.get("files", []):
-                    all_files.append(f)
-
-        if user_comments:
-            body_parts.extend(["", "## User Reports & Comments", *user_comments])
-
-        if all_imgs or all_files:
-            for img in all_imgs:
-                fn = strip_emojis(img.get("filename", "Screenshot"))
-                media_lines.append(f"![{fn}]({img['url']})")
-            for f in all_files:
-                fn = strip_emojis(f.get("filename", "File"))
-                media_lines.append(f"- [{fn}]({f['url']})")
-            body_parts.extend(["", "## Screenshots & Attachments", *media_lines])
-
-        if description and description.strip():
-            admin_notes.append(strip_emojis(description).strip())
-        if admin_notes:
-            body_parts.extend(["", "## Maintainer Notes", *admin_notes])
-
-        context_lines = []
-        if isinstance(starter, dict) and starter.get("author"):
-            role = "Admin" if starter.get("is_admin") else "User"
-            author_clean = strip_emojis(starter['author']).lstrip("@#").strip() or "User"
-            context_lines.append(f"- Reported by: #{author_clean} ({role})")
-        elif reporter:
-            author_clean = strip_emojis(reporter).lstrip("@#").strip() or "User"
-            context_lines.append(f"- Reported by: #{author_clean}")
-        if context_lines:
-            body_parts.extend(["", "## Context", *context_lines])
-
+        body = build_issue_body(
+            summary=None,
+            details=None,
+            extra_messages=extra_messages,
+            attachments=attachments,
+            description=description,
+            starter=starter,
+            reporter=reporter
+        )
         res = {
             "title": title,
-            "body": "\n".join(body_parts),
+            "body": body,
             "labels": ["bug"]
         }
         if is_update:

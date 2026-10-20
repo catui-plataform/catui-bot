@@ -256,6 +256,49 @@ class IssueAndReleaseAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Checking logs now", result["comment"])
         self.assertIn("![log.png](https://cdn.discord.com/log.png)", result["comment"])
 
+    async def test_assistant_format_issue_strips_lecture_and_formats_quotes(self):
+        lecture_response = json.dumps({
+            "title": "CATui is crashing",
+            "summary": "CATui is crashing. The reporter did not include additional technical details, reproduction steps, or logs in the original report or the follow-up message. Further information (version, platform, steps to reproduce, and any error output) is needed to investigate the crash.",
+            "labels": ["bug", "crash"]
+        })
+        self.http.json = AsyncMock(return_value={
+            "choices": [{"message": {"content": f"```json\n{lecture_response}\n```"}}]
+        })
+        extra = [{
+            "id": 123456,
+            "author": "@arthie",
+            "is_admin": True,
+            "content": "hello bot my issue is:\n\nu re so fucking hot got damnn, my catui is crashing cuz of that!!!",
+            "images": [],
+            "files": []
+        }]
+        result = await self.assistant.format_issue(
+            thread_title="catui crashing",
+            starter={"author": "arthie", "content": "help", "images": [], "files": []},
+            extra_messages=extra,
+            description="damnn son",
+            is_update=False
+        )
+        # Verify lecturing sentences are stripped
+        self.assertNotIn("The reporter did not include", result["body"])
+        self.assertNotIn("Further information", result["body"])
+        self.assertIn("## Summary\nCATui is crashing.", result["body"])
+
+        # Verify maintainer note section
+        self.assertIn("## Maintainer Notes", result["body"])
+        self.assertIn("damnn son", result["body"])
+
+        # Verify quote is properly blockquoted across multiple lines
+        expected_quote = (
+            "> **#arthie (Maintainer):** hello bot my issue is:\n"
+            ">\n"
+            "> u re so fucking hot got damnn, my catui is crashing cuz of that!!!"
+        )
+        self.assertIn(expected_quote, result["body"])
+        self.assertNotIn("    #arthie", result["body"])
+        self.assertNotIn("@arthie", result["body"])
+
     async def test_assistant_format_release_with_llm(self):
         expected_announcement = """```yaml
 # CATUI | BUILD ZERO (0.1.1)
