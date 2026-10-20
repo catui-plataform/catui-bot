@@ -455,6 +455,30 @@ class Service:
             "action": "solved" if solved else ("reopened" if reopen else "created")
         }
 
+    async def delete_github_issue(self, thread_id=None, repo=None, issue_number=None):
+        target_repo = (repo or getattr(self.config, "issues_repo", "arthiee4/catui-main")).strip()
+        num = issue_number
+        if not num and thread_id:
+            existing = self.state.get_thread_issue(thread_id)
+            if existing:
+                num = existing.get("issue_number")
+                if existing.get("repo"):
+                    target_repo = existing["repo"]
+
+        details = None
+        if num:
+            details = await self.upstream.delete_issue(target_repo, num)
+
+        if thread_id:
+            self.state.delete_thread_issue(thread_id)
+
+        return {
+            "deleted": True,
+            "repo": target_repo,
+            "number": num,
+            "details": details
+        }
+
     async def get_release_announcement(self, tag=None):
         release = await self.upstream.catui_release(tag=tag)
         if not release:

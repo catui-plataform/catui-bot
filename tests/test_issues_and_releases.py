@@ -365,6 +365,48 @@ Closed testing on Windows.
         self.assertEqual(release["tag"], "build-zero(0.1.1)")
         self.assertEqual(release["body"], "Changelog content")
 
+    async def test_upstream_delete_issue_graphql_and_fallback(self):
+        # 1. Successful GraphQL deletion
+        async def mock_json_success(url, method="GET", payload=None, headers=None):
+            if "graphql" in url:
+                return {"data": {"deleteIssue": {"clientMutationId": None}}}
+            return {"node_id": "I_kwDO123456", "number": 77}
+
+        self.http.json = AsyncMock(side_effect=mock_json_success)
+        res1 = await self.upstream.delete_issue("arthiee4/catui-main", 77)
+        self.assertTrue(res1["deleted"])
+        self.assertEqual(res1["method"], "graphql")
+
+        # 2. Fallback to closing as not_planned if GraphQL returns error
+        async def mock_json_err(url, method="GET", payload=None, headers=None):
+            if "graphql" in url:
+                return {"errors": [{"message": "Must have admin rights to delete issues."}]}
+            if method == "PATCH":
+                return {"number": 78, "state": "closed"}
+            return {"node_id": "I_kwDO789", "number": 78}
+
+        self.http.json = AsyncMock(side_effect=mock_json_err)
+        res2 = await self.upstream.delete_issue("arthiee4/catui-main", 78)
+        self.assertTrue(res2["deleted"])
+        self.assertEqual(res2["method"], "closed_not_planned")
+
+        # 3. Graceful handling if issue is already 404
+        self.http.json = AsyncMock(side_effect=RemoteError("Not Found", status=404))
+        res3 = await self.upstream.delete_issue("arthiee4/catui-main", 79)
+        self.assertTrue(res3["deleted"])
+        self.assertEqual(res3["method"], "already_deleted")
+
+    async def test_service_delete_github_issue(self):
+        self.upstream.delete_issue = AsyncMock(return_value={"deleted": True, "method": "graphql"})
+        self.state.save_thread_issue(888999, "arthiee4/catui-main", 42, "https://github.com/arthiee4/catui-main/issues/42")
+
+        res = await self.service.delete_github_issue(thread_id=888999)
+        self.assertTrue(res["deleted"])
+        self.assertEqual(res["number"], 42)
+        self.upstream.delete_issue.assert_awaited_once_with("arthiee4/catui-main", 42)
+        # Verify thread mapping is deleted from state
+        self.assertIsNone(self.state.get_thread_issue(888999))
+
     async def test_service_create_github_issue(self):
         self.assistant.format_issue = AsyncMock(return_value={
             "title": "Clean Issue Title",
@@ -706,6 +748,17 @@ Closed testing on Windows.
             self.assertTrue(bot.service.create_github_issue.call_args.kwargs["reopen"])
             self.assertFalse(bot.service.create_github_issue.call_args.kwargs["solved"])
             target.edit.assert_awaited_once_with(applied_tags=[core_tag], locked=False, archived=False)
+
+            # 3. Running with delete=True deletes the issue on GitHub and deletes the thread in Discord
+            bot.service.delete_github_issue = AsyncMock(return_value={"deleted": True})
+            target.delete = AsyncMock()
+            await cmd.callback(interaction, message="cleanup", new=False, solved=None, delete=True)
+            bot.service.delete_github_issue.assert_awaited_once_with(
+                thread_id=555666777,
+                repo="arthiee4/catui-main",
+                issue_number=None
+            )
+            target.delete.assert_awaited_once()
         finally:
             if hasattr(bot, "session") and not bot.session.closed:
                 await bot.session.close()

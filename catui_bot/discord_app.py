@@ -827,17 +827,19 @@ class Bot(discord.Client):
             )
             await self.discord_io.call(interaction.response.send_message, embed=embed, ephemeral=True)
 
-        @self.tree.command(name="issue", description="Create or update a GitHub issue in arthiee4/catui-main from this gallery post", guild=guild)
+        @self.tree.command(name="issue", description="Create, update, or delete a GitHub issue in arthiee4/catui-main from this gallery post", guild=guild)
         @app_commands.describe(
             message="Optional text note, message IDs, or links (space-separated, e.g. 'another test 1562184884800192664')",
             new="Set to True to create a new issue instead of updating the existing one",
-            solved="Set to True to mark as solved/closed, or False to reopen the issue and thread"
+            solved="Set to True to mark as solved/closed, or False to reopen the issue and thread",
+            delete="Set to True to permanently delete the issue on GitHub and delete this Discord thread"
         )
         async def issue_cmd(
             interaction: discord.Interaction,
             message: str = None,
             new: bool = False,
-            solved: Optional[bool] = None
+            solved: Optional[bool] = None,
+            delete: bool = False
         ):
             await self.discord_io.call(interaction.response.defer, ephemeral=False)
             target = interaction.channel
@@ -903,38 +905,79 @@ class Bot(discord.Client):
             thread_tags = [t.name for t in thread_tag_objects if hasattr(t, "name")]
             thread_tags_lower = [t.lower().strip() for t in thread_tags]
 
+            is_delete = bool(delete)
             is_solved = False
             is_reopen = False
 
-            if solved is True:
-                is_solved = True
-            elif solved is False:
-                is_reopen = True
+            if not is_delete:
+                if solved is True:
+                    is_solved = True
+                elif solved is False:
+                    is_reopen = True
 
             if note_text:
                 note_lower = note_text.lower().strip()
-                if note_lower in ("reopen", "--reopen", "unsolve", "unsolved"):
-                    is_reopen = True
-                    is_solved = False
+                if note_lower in ("delete", "--delete", "destroy", "remove"):
+                    is_delete = True
                     note_text = ""
-                elif note_lower.endswith(" reopen") or note_lower.endswith(" unsolved"):
-                    is_reopen = True
-                    is_solved = False
+                elif note_lower.endswith(" delete") or note_lower.endswith(" --delete"):
+                    is_delete = True
                     note_text = note_text.rsplit(" ", 1)[0].strip()
-                elif note_lower.startswith("reopen ") or note_lower.startswith("unsolve "):
-                    is_reopen = True
-                    is_solved = False
+                elif note_lower.startswith("delete ") or note_lower.startswith("--delete "):
+                    is_delete = True
                     note_text = note_text.split(" ", 1)[1].strip()
-                elif not is_reopen and not is_solved and solved is None:
-                    if note_lower in ("solved", "--solved"):
-                        is_solved = True
+                elif not is_delete:
+                    if note_lower in ("reopen", "--reopen", "unsolve", "unsolved"):
+                        is_reopen = True
+                        is_solved = False
                         note_text = ""
-                    elif note_lower.endswith(" solved"):
-                        is_solved = True
-                        note_text = note_text[:-7].strip()
-                    elif note_lower.startswith("solved "):
-                        is_solved = True
-                        note_text = note_text[7:].strip()
+                    elif note_lower.endswith(" reopen") or note_lower.endswith(" unsolved"):
+                        is_reopen = True
+                        is_solved = False
+                        note_text = note_text.rsplit(" ", 1)[0].strip()
+                    elif note_lower.startswith("reopen ") or note_lower.startswith("unsolve "):
+                        is_reopen = True
+                        is_solved = False
+                        note_text = note_text.split(" ", 1)[1].strip()
+                    elif not is_reopen and not is_solved and solved is None:
+                        if note_lower in ("solved", "--solved"):
+                            is_solved = True
+                            note_text = ""
+                        elif note_lower.endswith(" solved"):
+                            is_solved = True
+                            note_text = note_text[:-7].strip()
+                        elif note_lower.startswith("solved "):
+                            is_solved = True
+                            note_text = note_text[7:].strip()
+
+            if is_delete:
+                target_repo = self.config.issues_repo.strip()
+                existing = self.state.get_thread_issue(target.id)
+                if not existing:
+                    existing = await find_existing_issue_in_thread(target, target_repo)
+
+                issue_num = existing.get("issue_number") if existing else None
+                repo_name = existing.get("repo", target_repo) if existing else target_repo
+
+                try:
+                    await self.service.delete_github_issue(
+                        thread_id=target.id,
+                        repo=repo_name,
+                        issue_number=issue_num
+                    )
+                except Exception as exc:
+                    log.warning("Failed to delete issue on GitHub: %s", exc)
+
+                issue_info = f"GitHub Issue #{issue_num}" if issue_num else "unlinked issue"
+                await self.discord_io.call(
+                    interaction.followup.send,
+                    f"Deleted {issue_info} and deleting Discord thread..."
+                )
+                try:
+                    await self.discord_io.call(target.delete)
+                except Exception as exc:
+                    log.warning("Failed to delete Discord thread %s: %s", target.id, exc)
+                return
 
             if not is_solved and not is_reopen and solved is None:
                 if "solved" in thread_tags_lower or "resolvido" in thread_tags_lower:

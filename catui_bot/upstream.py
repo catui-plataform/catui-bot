@@ -251,6 +251,40 @@ class Upstream:
             "url": data.get("html_url", "")
         }
 
+    async def delete_issue(self, repo, issue_number):
+        url = f"https://api.github.com/repos/{repo}/issues/{issue_number}"
+        try:
+            data = await self.http.json(url, method="GET")
+        except RemoteError as exc:
+            if exc.status in {404, 410}:
+                return {"deleted": True, "method": "already_deleted"}
+            raise
+
+        node_id = data.get("node_id")
+        if not node_id:
+            await self.update_issue(repo, issue_number, state="closed", state_reason="not_planned")
+            return {"deleted": True, "method": "closed_not_planned"}
+
+        mutation = """
+        mutation($issueId: ID!) {
+            deleteIssue(input: {issueId: $issueId}) {
+                clientMutationId
+            }
+        }
+        """
+        try:
+            res = await self.http.json("https://api.github.com/graphql", method="POST", payload={
+                "query": mutation,
+                "variables": {"issueId": node_id}
+            })
+            if res.get("errors"):
+                await self.update_issue(repo, issue_number, state="closed", state_reason="not_planned")
+                return {"deleted": True, "method": "closed_not_planned"}
+            return {"deleted": True, "method": "graphql"}
+        except Exception:
+            await self.update_issue(repo, issue_number, state="closed", state_reason="not_planned")
+            return {"deleted": True, "method": "closed_not_planned"}
+
     async def catui_release(self, tag=None):
         if tag:
             url = f"https://api.github.com/repos/{STORE_REPO}/releases/tags/{quote(tag, safe='')}"
