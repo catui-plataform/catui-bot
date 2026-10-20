@@ -28,10 +28,11 @@ class IssueAndReleaseLLMTests(unittest.TestCase):
 
     def test_parse_message_inputs(self):
         raw = (
-            "1460650067139756165 https://discord.com/channels/123456789012345678/999888777666555444/1460650067139756166 "
+            "another test 1460650067139756165 https://discord.com/channels/123456789012345678/999888777666555444/1460650067139756166 "
             "https://cdn.discordapp.com/attachments/111/222/screenshot.png https://imgur.com/gallery/error.jpg"
         )
-        refs, direct_imgs = parse_message_inputs(raw)
+        refs, direct_imgs, note_text = parse_message_inputs(raw)
+        self.assertEqual(note_text, "another test")
         self.assertEqual(len(refs), 2)
         self.assertEqual(refs[0]["message_id"], 1460650067139756165)
         self.assertIsNone(refs[0]["channel_id"])
@@ -201,6 +202,27 @@ class IssueAndReleaseAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["title"], "Audio settings crash with bluetooth headset")
         self.assertEqual(result["labels"], ["bug", "audio", "crash"])
         self.assertIn("## Summary", result["body"])
+
+    async def test_assistant_format_issue_guards_against_hallucinations_on_update(self):
+        llm_hallucinated = json.dumps({
+            "title": "Hallucinated Title",
+            "body": "Hallucinated Body",
+            "labels": ["bug"],
+            "comment": "Update on this issue: crash confirmed on Android devices. Logcat output needed."
+        })
+        self.http.json = AsyncMock(return_value={
+            "choices": [{"message": {"content": f"```json\n{llm_hallucinated}\n```"}}]
+        })
+        result = await self.assistant.format_issue(
+            thread_title="Sound crackles on PCSX2",
+            starter={"author": "User1", "content": "Audio crackles", "images": [], "files": []},
+            description="another test",
+            is_update=True
+        )
+        self.assertNotIn("Android", result.get("comment", ""))
+        self.assertNotIn("Logcat", result.get("comment", ""))
+        self.assertIn("another test", result.get("comment", ""))
+        self.assertEqual(result["title"], "Sound crackles on PCSX2")
 
     async def test_assistant_format_release_with_llm(self):
         expected_announcement = """```yaml

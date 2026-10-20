@@ -341,18 +341,21 @@ DISCORD_MSG_LINK_RE = re.compile(r"https?://(?:ptb\.|canary\.)?discord(?:app)?\.
 
 def parse_message_inputs(raw):
     """
-    Parses a string or sequence containing any combination of:
+    Parses a string containing any combination of:
+    - Text notes (e.g. 'another test', 'o usuario relatou outro problema')
     - Discord message URLs (https://discord.com/channels/<guild>/<channel>/<id>)
     - Discord message snowflake IDs (123456789012345678)
     - Direct image URLs (https://.../photo.png, discord CDN links)
     Returns:
     - msg_refs: list of dicts with {"guild_id": Optional[int], "channel_id": Optional[int], "message_id": int}
     - direct_images: list of dicts with {"filename": str, "url": str}
+    - text_notes: str (the remaining text after stripping out IDs and links)
     """
     if not raw:
-        return [], []
+        return [], [], ""
     msg_refs = []
     direct_images = []
+    text_tokens = []
     tokens = re.split(r"[\s,;]+", str(raw).strip())
     seen_ids = set()
     seen_urls = set()
@@ -395,12 +398,16 @@ def parse_message_inputs(raw):
             if mid not in seen_ids:
                 seen_ids.add(mid)
                 msg_refs.append({"guild_id": None, "channel_id": None, "message_id": mid})
+            continue
 
-    return msg_refs, direct_images
+        text_tokens.append(t)
+
+    text_notes = " ".join(text_tokens).strip()
+    return msg_refs, direct_images, text_notes
 
 
 def extract_message_ids(raw):
-    refs, _ = parse_message_inputs(raw)
+    refs, _, _ = parse_message_inputs(raw)
     return [r["message_id"] for r in refs]
 
 
@@ -821,16 +828,12 @@ class Bot(discord.Client):
 
         @self.tree.command(name="issue", description="Create or update a GitHub issue in arthiee4/catui-main from this gallery post", guild=guild)
         @app_commands.describe(
-            description="Optional extra details or maintainer notes for the issue/update",
-            messages="Optional message IDs or links (space-separated, e.g. 1562184884800192664 1562184933428957195)",
-            attachment="Optional screenshot or file to attach to the issue/update",
+            message="Optional text note, message IDs, or links (space-separated, e.g. 'another test 1562184884800192664')",
             new="Set to True to create a new issue instead of updating the existing one"
         )
         async def issue_cmd(
             interaction: discord.Interaction,
-            description: str = None,
-            messages: str = None,
-            attachment: discord.Attachment = None,
+            message: str = None,
             new: bool = False
         ):
             await self.discord_io.call(interaction.response.defer, ephemeral=False)
@@ -888,13 +891,9 @@ class Bot(discord.Client):
                     if existing:
                         self.state.save_thread_issue(target.id, existing["repo"], existing["issue_number"], existing["issue_url"])
 
-            # Parse message inputs (supports unlimited space/comma-separated IDs or links)
-            msg_refs, parsed_images = parse_message_inputs(messages)
-
-            # Direct attachments from command parameter + parsed image links
+            # Parse message input (separates message IDs/links, direct images, and text notes)
+            msg_refs, parsed_images, note_text = parse_message_inputs(message)
             all_direct_attachments = list(parsed_images)
-            if attachment:
-                all_direct_attachments.append({"filename": attachment.filename, "url": attachment.url})
 
             # Process extra messages
             extra_messages = []
@@ -957,7 +956,7 @@ class Bot(discord.Client):
                     starter=starter_data,
                     extra_messages=extra_messages,
                     attachments=all_direct_attachments,
-                    description=description,
+                    description=note_text,
                     thread_id=target.id,
                     new=new,
                     existing_issue=existing
@@ -1005,8 +1004,8 @@ class Bot(discord.Client):
                     value=f"{len(extra_messages)} message(s) ({total_imgs} screenshot(s)/file(s))",
                     inline=False
                 )
-            if is_updated and description:
-                embed.add_field(name="Maintainer Update Note", value=description[:1000], inline=False)
+            if is_updated and note_text:
+                embed.add_field(name="Maintainer Update Note", value=note_text[:1000], inline=False)
 
             view = SafeView(timeout=180)
             view.add_item(discord.ui.Button(label="View Issue (Admin Only)", url=created["url"]))

@@ -137,15 +137,18 @@ class Assistant:
     async def format_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, is_update=False):
         if is_update:
             system = (
-                "You are an expert GitHub issue organizer for CATui (a modern emulator frontend and launcher built in Godot).\n"
-                "A user/admin is submitting an UPDATE to an existing GitHub issue from a Discord thread.\n"
+                "You are an expert GitHub issue assistant for CATui (a modern emulator frontend built in Godot).\n"
+                "A maintainer is submitting a brief update/comment to an existing GitHub issue.\n"
                 "RULES:\n"
-                "1. Output MUST be valid JSON with exactly these keys: 'title', 'body', 'labels', 'comment'.\n"
-                "2. 'comment': A concise, well-structured GitHub update comment detailing the new observations, symptoms, user reports, and embedding screenshots using ![Screenshot](url). Strictly NO emojis.\n"
-                "3. 'body': The consolidated, complete GitHub issue description incorporating both the initial problem and the new findings. Strictly NO emojis.\n"
-                "4. 'title': Issue title (update if the problem is now clearer, otherwise keep). Strictly NO emojis.\n"
-                "5. 'labels': JSON array of 1 to 4 clean, appropriate lowercase tags. Strictly NO emojis.\n"
-                "6. Output ONLY raw JSON, without markdown code fences or conversational filler."
+                "1. Output MUST be valid JSON with keys: 'comment', 'body', 'labels'.\n"
+                "2. 'comment': A brief, factual update comment based strictly and only on maintainer_notes and extra_messages.\n"
+                "   - Be direct, concise and simple (e.g. '**Maintainer Note:** another test', 'User confirmed the issue persists').\n"
+                "   - Embed any screenshots using ![Screenshot](url).\n"
+                "   - STRICTLY FORBIDDEN: DO NOT invent platforms (e.g. Android), device models, logcat, reproduction steps, or diagnostic essays not explicitly in the input.\n"
+                "   - Strictly NO emojis.\n"
+                "3. 'body': The consolidated issue description. Keep the existing issue description without hallucinating new details. Strictly NO emojis.\n"
+                "4. 'labels': JSON array of 1 to 4 clean lowercase tags. Strictly NO emojis.\n"
+                "5. Output ONLY raw JSON, without markdown code fences or conversational filler."
             )
         else:
             system = (
@@ -221,11 +224,20 @@ class Assistant:
             elif "{" in raw_clean and "}" in raw_clean:
                 raw_clean = raw_clean[raw_clean.find("{"):raw_clean.rfind("}") + 1]
             parsed = json.loads(raw_clean)
-            if isinstance(parsed, dict) and "title" in parsed and "body" in parsed:
-                title = strip_emojis(parsed["title"]).strip() or strip_emojis(thread_title).strip()
+            if isinstance(parsed, dict) and "body" in parsed:
+                title = strip_emojis(thread_title).strip() if is_update else (strip_emojis(parsed.get("title", "")).strip() or strip_emojis(thread_title).strip())
                 body = strip_emojis(parsed["body"]).strip()
                 labels = sanitize_labels(parsed.get("labels"))
                 comment = strip_emojis(parsed.get("comment", "")).strip() if is_update else ""
+
+                if is_update and comment:
+                    input_text = f"{thread_title} {description} {json.dumps(extra_messages or [])}".lower()
+                    comment_lower = comment.lower()
+                    for forbidden in ("android", "logcat", "device model", "what is needed", "expected resolution"):
+                        if forbidden in comment_lower and forbidden not in input_text:
+                            log.warning("Detected hallucination '%s' in DeepSeek update comment, using fallback", forbidden)
+                            return self.fallback_issue(thread_title, starter, extra_messages, reporter, attachments, description, is_update=is_update)
+
                 res = {"title": title, "body": body, "labels": labels}
                 if comment:
                     res["comment"] = comment
