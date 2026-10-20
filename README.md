@@ -7,5 +7,8 @@ Checks upstream commits against the source bases in the CATui store, shows the l
 - `/cores-panel` - choose which cores to monitor.
 - `/cores-check` - check commits and review available updates.
 - `/chat` - talk to the CATui assistant.
-- `/issue` - convert a Discord issue gallery post into a simplified GitHub issue on `arthiee4/catui-main`.
+- `/issue` - convert a Discord issue gallery post into a simplified GitHub issue on `arthiee4/catui-main` (supports optional message IDs / links for screenshots and extra comments).
 - `/release` - format the latest CATui release into the official Discord release announcement template.
+- `/admin-add` - add an administrator to the bot (Owner only).
+- `/admin-remove` - remove an administrator from the bot (Owner only).
+- `/admins` - list current bot administrators.

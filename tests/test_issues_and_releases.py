@@ -15,10 +15,17 @@ from catui_bot.upstream import Upstream
 from catui_bot.service import Service
 from catui_bot.state import State
 from catui_bot.http import RemoteError
-from catui_bot.discord_app import Bot, OwnerTree
+from catui_bot.discord_app import Bot, OwnerTree, extract_message_ids
 
 
 class IssueAndReleaseLLMTests(unittest.TestCase):
+    def test_extract_message_ids(self):
+        raw = "1460650067139756165, 1460650067139756166; https://discord.com/channels/123456789012345678/1460650067139756165/1460650067139756167"
+        ids = extract_message_ids(raw)
+        self.assertEqual(ids, [1460650067139756165, 1460650067139756166, 1460650067139756167])
+        self.assertEqual(extract_message_ids(""), [])
+        self.assertEqual(extract_message_ids(None), [])
+
     def test_strip_emojis(self):
         text = "🔥 Bug with audio! 🎧 Crashes on start 💥"
         cleaned = strip_emojis(text)
@@ -40,19 +47,53 @@ class IssueAndReleaseLLMTests(unittest.TestCase):
         self.assertEqual(sanitize_labels([]), ["bug"])
         self.assertEqual(sanitize_labels(None), ["bug"])
 
-    def test_fallback_issue(self):
+    def test_fallback_issue_with_multi_messages_and_roles(self):
+        starter = {
+            "author": "PlayerOne",
+            "is_admin": False,
+            "content": "When playing PS2 games, rumble stays on forever. 🛑",
+            "images": [{"filename": "crash.png", "url": "https://cdn.discord.com/crash.png"}],
+            "files": [{"filename": "log.txt", "url": "https://cdn.discord.com/log.txt"}]
+        }
+        extra_messages = [
+            {
+                "id": 111,
+                "author": "GamerTwo",
+                "is_admin": False,
+                "content": "I also reproduced this on Windows 11 with DualSense!",
+                "images": [{"filename": "controller.jpg", "url": "https://cdn.discord.com/controller.jpg"}],
+                "files": []
+            },
+            {
+                "id": 222,
+                "author": "AdminDev",
+                "is_admin": True,
+                "content": "Confirmed in pcsx2 input handler, mutex is not unlocked.",
+                "images": [],
+                "files": []
+            }
+        ]
         issue = Assistant.fallback_issue(
             thread_title="🎮 Controller rumble not stopping",
-            starter_content="When playing PS2 games, rumble stays on forever. 🛑",
-            reporter="PlayerOne",
-            attachments=["https://example.com/log.txt"],
-            description="Reproduced on DualSense via USB."
+            starter=starter,
+            extra_messages=extra_messages,
+            description="High priority fix needed."
         )
         self.assertNotIn("🎮", issue["title"])
         self.assertNotIn("🛑", issue["body"])
-        self.assertIn("PlayerOne", issue["body"])
-        self.assertIn("Reproduced on DualSense via USB.", issue["body"])
-        self.assertIn("https://example.com/log.txt", issue["body"])
+        # Check user report section
+        self.assertIn("## User Reports & Comments", issue["body"])
+        self.assertIn("@GamerTwo", issue["body"])
+        self.assertIn("I also reproduced this", issue["body"])
+        # Check maintainer notes section
+        self.assertIn("## Maintainer Notes", issue["body"])
+        self.assertIn("@AdminDev", issue["body"])
+        self.assertIn("Confirmed in pcsx2 input handler", issue["body"])
+        self.assertIn("High priority fix needed.", issue["body"])
+        # Check image embeds
+        self.assertIn("![crash.png](https://cdn.discord.com/crash.png)", issue["body"])
+        self.assertIn("![controller.jpg](https://cdn.discord.com/controller.jpg)", issue["body"])
+        self.assertIn("[log.txt](https://cdn.discord.com/log.txt)", issue["body"])
         self.assertEqual(issue["labels"], ["bug"])
 
     def test_fallback_release(self):
@@ -106,6 +147,21 @@ class IssueAndReleaseAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.state.close()
         self.temp.cleanup()
 
+    async def test_state_admin_management(self):
+        # Owner is always an admin
+        self.assertTrue(self.state.is_admin(self.config.owner_id, self.config.owner_id))
+        self.assertFalse(self.state.is_admin(999888777666555444, self.config.owner_id))
+
+        # Add admin
+        self.state.add_admin(999888777666555444)
+        self.assertIn(999888777666555444, self.state.admins())
+        self.assertTrue(self.state.is_admin(999888777666555444, self.config.owner_id))
+
+        # Remove admin
+        self.state.remove_admin(999888777666555444)
+        self.assertNotIn(999888777666555444, self.state.admins())
+        self.assertFalse(self.state.is_admin(999888777666555444, self.config.owner_id))
+
     async def test_assistant_format_issue_with_llm(self):
         mock_llm_response = {
             "choices": [{
@@ -121,7 +177,7 @@ class IssueAndReleaseAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.http.json = AsyncMock(return_value=mock_llm_response)
         result = await self.assistant.format_issue(
             thread_title="💥 Audio settings crash with bluetooth headset",
-            starter_content="Crashes immediately on bluetooth",
+            starter="Crashes immediately on bluetooth",
             reporter="TestUser"
         )
         self.assertEqual(result["title"], "Audio settings crash with bluetooth headset")
@@ -187,22 +243,25 @@ Closed testing on Windows.
         })
         res = await self.service.create_github_issue(
             thread_title="Raw thread title",
-            starter_content="Raw starter text",
-            reporter="User123"
+            starter={"author": "User123", "content": "Raw starter text", "is_admin": False, "images": [], "files": []}
         )
         self.assertEqual(res["number"], 99)
         self.assertEqual(res["repo"], "arthiee4/catui-main")
         self.assertEqual(res["labels"], ["bug", "ui"])
 
-    async def test_owner_tree_permissions(self):
+    async def test_owner_tree_permissions_and_admin_delegation(self):
         bot = Bot(self.config)
         bot.discord_io = MagicMock(ready=True, call=AsyncMock())
         bot.private_ready = True
         tree = bot.tree
 
         try:
-            # 1. Non-owner gets denied on /issue
-            interaction_non_owner = SimpleNamespace(
+            # Add a secondary admin
+            secondary_admin_id = 444555666777888999
+            bot.state.add_admin(secondary_admin_id)
+
+            # 1. Non-admin gets denied on /issue
+            interaction_non_admin = SimpleNamespace(
                 user=SimpleNamespace(id=999999999999999999),
                 guild_id=self.config.guild_id,
                 channel_id=DEFAULT_ISSUES_CHANNEL_ID,
@@ -210,58 +269,51 @@ Closed testing on Windows.
                 command=SimpleNamespace(name="issue"),
                 response=SimpleNamespace(send_message=AsyncMock())
             )
-            allowed = await tree.interaction_check(interaction_non_owner)
-            self.assertFalse(allowed)
+            self.assertFalse(await tree.interaction_check(interaction_non_admin))
 
-            # 2. Owner allowed on /issue in gallery channel or thread
+            # 2. Secondary admin is allowed on /issue in gallery channel
             thread_channel = SimpleNamespace(id=555555555555555555, parent_id=DEFAULT_ISSUES_CHANNEL_ID)
-            interaction_owner = SimpleNamespace(
-                user=SimpleNamespace(id=self.config.owner_id),
+            interaction_sec_admin = SimpleNamespace(
+                user=SimpleNamespace(id=secondary_admin_id),
                 guild_id=self.config.guild_id,
                 channel_id=555555555555555555,
                 channel=thread_channel,
                 command=SimpleNamespace(name="issue"),
                 response=SimpleNamespace(send_message=AsyncMock())
             )
-            allowed = await tree.interaction_check(interaction_owner)
-            self.assertTrue(allowed)
+            self.assertTrue(await tree.interaction_check(interaction_sec_admin))
 
-            # 3. Owner denied on /issue in random channel
-            random_channel = SimpleNamespace(id=777777777777777777, parent_id=888888888888888888)
-            interaction_wrong_channel = SimpleNamespace(
-                user=SimpleNamespace(id=self.config.owner_id),
+            # 3. Secondary admin is allowed on /release
+            interaction_sec_release = SimpleNamespace(
+                user=SimpleNamespace(id=secondary_admin_id),
                 guild_id=self.config.guild_id,
                 channel_id=777777777777777777,
-                channel=random_channel,
-                command=SimpleNamespace(name="issue"),
-                response=SimpleNamespace(send_message=AsyncMock())
-            )
-            allowed = await tree.interaction_check(interaction_wrong_channel)
-            self.assertFalse(allowed)
-
-            # 4. Owner allowed on /release anywhere in the guild
-            interaction_release = SimpleNamespace(
-                user=SimpleNamespace(id=self.config.owner_id),
-                guild_id=self.config.guild_id,
-                channel_id=777777777777777777,
-                channel=random_channel,
+                channel=SimpleNamespace(id=777777777777777777, parent_id=888888888888888888),
                 command=SimpleNamespace(name="release"),
                 response=SimpleNamespace(send_message=AsyncMock())
             )
-            allowed = await tree.interaction_check(interaction_release)
-            self.assertTrue(allowed)
+            self.assertTrue(await tree.interaction_check(interaction_sec_release))
 
-            # 5. Non-owner denied on /release
-            interaction_release_non_owner = SimpleNamespace(
-                user=SimpleNamespace(id=999999999999999999),
+            # 4. Secondary admin CANNOT add/remove other admins (Owner only)
+            interaction_sec_admin_add = SimpleNamespace(
+                user=SimpleNamespace(id=secondary_admin_id),
                 guild_id=self.config.guild_id,
-                channel_id=777777777777777777,
-                channel=random_channel,
-                command=SimpleNamespace(name="release"),
+                channel_id=self.config.channel_id,
+                command=SimpleNamespace(name="admin-add"),
                 response=SimpleNamespace(send_message=AsyncMock())
             )
-            allowed = await tree.interaction_check(interaction_release_non_owner)
-            self.assertFalse(allowed)
+            self.assertFalse(await tree.interaction_check(interaction_sec_admin_add))
+
+            # 5. Owner CAN add admins
+            interaction_owner_admin_add = SimpleNamespace(
+                user=SimpleNamespace(id=self.config.owner_id),
+                guild_id=self.config.guild_id,
+                channel_id=self.config.channel_id,
+                command=SimpleNamespace(name="admin-add"),
+                response=SimpleNamespace(send_message=AsyncMock())
+            )
+            self.assertTrue(await tree.interaction_check(interaction_owner_admin_add))
+
         finally:
             bot.state.close()
 

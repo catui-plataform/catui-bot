@@ -347,11 +347,12 @@ class Service:
                 self.state.transition(job["id"], job["status"], following)
 
 
-    async def create_github_issue(self, thread_title, starter_content, reporter=None, attachments=None, description=None, repo=None):
+    async def create_github_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, repo=None):
         target_repo = repo or getattr(self.config, "issues_repo", "arthiee4/catui-main")
         formatted = await self.assistant.format_issue(
             thread_title=thread_title,
-            starter_content=starter_content,
+            starter=starter,
+            extra_messages=extra_messages,
             reporter=reporter,
             attachments=attachments,
             description=description

@@ -23,6 +23,7 @@ class State:
             stage TEXT NOT NULL DEFAULT '', reported_stage TEXT NOT NULL DEFAULT '',
             stage_pct INTEGER NOT NULL DEFAULT 0);
           CREATE TABLE IF NOT EXISTS release_summaries(core TEXT PRIMARY KEY, revision TEXT NOT NULL, data TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS admins(user_id INTEGER PRIMARY KEY, added_at INTEGER NOT NULL);
           CREATE INDEX IF NOT EXISTS job_core_sha ON jobs(core,sha,status);
           CREATE INDEX IF NOT EXISTS job_status ON jobs(status,created);
         """)
@@ -37,6 +38,24 @@ class State:
         with self.db:
             self.db.executemany("INSERT OR IGNORE INTO watch VALUES (?, 1)", [(x,) for x in CORE_IDS])
             self.db.execute("UPDATE jobs SET status='uncertain' WHERE status='dispatching'")
+
+    def admins(self):
+        return {int(r["user_id"]) for r in self.db.execute("SELECT user_id FROM admins")}
+
+    def add_admin(self, user_id):
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO admins(user_id, added_at) VALUES (?, ?)", (int(user_id), int(time.time())))
+
+    def remove_admin(self, user_id):
+        with self.db:
+            self.db.execute("DELETE FROM admins WHERE user_id = ?", (int(user_id),))
+
+    def is_admin(self, user_id, owner_id):
+        try:
+            uid = int(user_id)
+            return uid == int(owner_id) or uid in self.admins()
+        except (ValueError, TypeError):
+            return False
 
     def watches(self):
         return {r["core"]: bool(r["enabled"]) for r in self.db.execute("SELECT * FROM watch")}

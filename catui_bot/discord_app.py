@@ -335,18 +335,53 @@ def core_card(item, state, config):
     return embed
 
 
+def extract_message_ids(raw):
+    if not raw:
+        return []
+    ids = []
+    tokens = re.split(r"[\s,;]+", str(raw).strip())
+    for t in tokens:
+        t = t.strip()
+        if not t:
+            continue
+        if "/" in t:
+            last = t.rstrip("/").split("/")[-1]
+            if re.fullmatch(r"\d{15,22}", last):
+                ids.append(int(last))
+        elif re.fullmatch(r"\d{15,22}", t):
+            ids.append(int(t))
+    return list(dict.fromkeys(ids))
+
+
 class OwnerTree(app_commands.CommandTree):
     async def interaction_check(self, interaction):
         if not self.client.discord_io.ready:
             return False
-        if interaction.user.id != self.client.config.owner_id:
+
+        cmd_name = getattr(getattr(interaction, "command", None), "name", "")
+
+        # Owner-exclusive admin management
+        if cmd_name in {"admin-add", "admin-remove"}:
+            if interaction.user.id != self.client.config.owner_id:
+                await self.client.discord_io.call(
+                    interaction.response.send_message,
+                    "Only the bot owner can manage administrators.",
+                    ephemeral=True
+                )
+                return False
+            return True
+
+        # All other commands require being an admin (owner or added admin)
+        if not self.client.state.is_admin(interaction.user.id, self.client.config.owner_id):
             await self.client.discord_io.call(interaction.response.send_message, "Access denied.", ephemeral=True)
             return False
         if interaction.guild_id != self.client.config.guild_id:
             await self.client.discord_io.call(interaction.response.send_message, "Access denied.", ephemeral=True)
             return False
 
-        cmd_name = getattr(getattr(interaction, "command", None), "name", "")
+        if cmd_name == "admins":
+            return True
+
         if cmd_name == "issue":
             chan = interaction.channel
             parent_id = getattr(chan, "parent_id", None)
@@ -583,7 +618,7 @@ class Bot(discord.Client):
         self.last_scan = float("-inf")
 
     def allowed(self, user, guild, channel):
-        return self.private_ready and authorized(user, guild, channel, self.config)
+        return self.private_ready and authorized(user, guild, channel, self.config, self.state)
 
     async def setup_hook(self):
         self.session = aiohttp.ClientSession()
@@ -651,12 +686,47 @@ class Bot(discord.Client):
             answer = await self.chat(message)
             await self.discord_io.call(interaction.followup.send, embed=card("CATui > assistant", answer), ephemeral=True)
 
+        @self.tree.command(name="admin-add", description="Add a new administrator to the bot (Owner only)", guild=guild)
+        @app_commands.describe(user="The Discord user to promote to bot administrator")
+        async def admin_add_cmd(interaction: discord.Interaction, user: discord.User):
+            if user.bot:
+                await self.discord_io.call(interaction.response.send_message, "Bots cannot be administrators.", ephemeral=True)
+                return
+            if user.id == self.config.owner_id:
+                await self.discord_io.call(interaction.response.send_message, f"{user.mention} is already the bot owner.", ephemeral=True)
+                return
+            self.state.add_admin(user.id)
+            await self.discord_io.call(interaction.response.send_message, f"Successfully added {user.mention} (`{user.id}`) as an administrator.", ephemeral=True)
+
+        @self.tree.command(name="admin-remove", description="Remove an administrator from the bot (Owner only)", guild=guild)
+        @app_commands.describe(user="The Discord user to remove from administrators")
+        async def admin_remove_cmd(interaction: discord.Interaction, user: discord.User):
+            if user.id == self.config.owner_id:
+                await self.discord_io.call(interaction.response.send_message, "Cannot remove the bot owner.", ephemeral=True)
+                return
+            self.state.remove_admin(user.id)
+            await self.discord_io.call(interaction.response.send_message, f"Removed {user.mention} (`{user.id}`) from administrators.", ephemeral=True)
+
+        @self.tree.command(name="admins", description="List all bot administrators", guild=guild)
+        async def admins_cmd(interaction: discord.Interaction):
+            admin_ids = self.state.admins()
+            lines = [f"* **Owner:** <@{self.config.owner_id}> (`{self.config.owner_id}`)"]
+            for aid in admin_ids:
+                lines.append(f"* **Admin:** <@{aid}> (`{aid}`)")
+            embed = discord.Embed(
+                title="Bot Administrators",
+                description="\n".join(lines),
+                color=0x5865F2
+            )
+            await self.discord_io.call(interaction.response.send_message, embed=embed, ephemeral=True)
+
         @self.tree.command(name="issue", description="Create a GitHub issue in arthiee4/catui-main from this gallery thread/post", guild=guild)
         @app_commands.describe(
             description="Optional extra details or maintainer notes for the issue",
+            messages="Optional: message IDs or links (comma/space separated) to include extra comments/screenshots",
             thread="Optional: specify an issue thread if not running directly inside it"
         )
-        async def issue_cmd(interaction: discord.Interaction, description: str = None, thread: discord.Thread = None):
+        async def issue_cmd(interaction: discord.Interaction, description: str = None, messages: str = None, thread: discord.Thread = None):
             await self.discord_io.call(interaction.response.defer, ephemeral=False)
             target = thread or (interaction.channel if isinstance(interaction.channel, discord.Thread) else None)
             if not target:
@@ -679,16 +749,56 @@ class Bot(discord.Client):
                     except Exception:
                         starter_msg = None
 
-            starter_text = starter_msg.content if starter_msg else ""
-            reporter = starter_msg.author.display_name if starter_msg else ""
-            attachments = [a.url for a in starter_msg.attachments] if starter_msg else []
+            starter_imgs = []
+            starter_files = []
+            if starter_msg and starter_msg.attachments:
+                for att in starter_msg.attachments:
+                    fn = att.filename.lower()
+                    if any(fn.endswith(e) for e in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")) or (att.content_type and att.content_type.startswith("image/")):
+                        starter_imgs.append({"filename": att.filename, "url": att.url})
+                    else:
+                        starter_files.append({"filename": att.filename, "url": att.url})
+
+            starter_data = {
+                "author": starter_msg.author.display_name if starter_msg else "",
+                "is_admin": self.state.is_admin(starter_msg.author.id, self.config.owner_id) if starter_msg else False,
+                "content": starter_msg.content if starter_msg else "",
+                "images": starter_imgs,
+                "files": starter_files
+            }
+
+            # Process extra messages
+            extra_messages = []
+            msg_ids = extract_message_ids(messages)
+            for mid in msg_ids:
+                if starter_msg and mid == starter_msg.id:
+                    continue
+                try:
+                    m = await self.discord_io.call(target.fetch_message, mid)
+                except Exception:
+                    continue
+                m_imgs = []
+                m_files = []
+                for att in m.attachments:
+                    fn = att.filename.lower()
+                    if any(fn.endswith(e) for e in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")) or (att.content_type and att.content_type.startswith("image/")):
+                        m_imgs.append({"filename": att.filename, "url": att.url})
+                    else:
+                        m_files.append({"filename": att.filename, "url": att.url})
+                extra_messages.append({
+                    "id": m.id,
+                    "author": m.author.display_name,
+                    "is_admin": self.state.is_admin(m.author.id, self.config.owner_id),
+                    "content": m.content,
+                    "images": m_imgs,
+                    "files": m_files
+                })
 
             try:
                 created = await self.service.create_github_issue(
                     thread_title=target.name,
-                    starter_content=starter_text,
-                    reporter=reporter,
-                    attachments=attachments,
+                    starter=starter_data,
+                    extra_messages=extra_messages,
                     description=description
                 )
             except RemoteError as exc:
@@ -714,8 +824,15 @@ class Bot(discord.Client):
             )
             embed.add_field(name="Repository", value=f"`{created['repo']}`", inline=True)
             embed.add_field(name="Labels", value=f"`{labels_str}`", inline=True)
-            if reporter:
-                embed.add_field(name="Reported by", value=reporter, inline=True)
+            if starter_data["author"]:
+                embed.add_field(name="Reported by", value=starter_data["author"], inline=True)
+            if extra_messages:
+                total_imgs = sum(len(m["images"]) for m in extra_messages)
+                embed.add_field(
+                    name="Extra Context Included",
+                    value=f"{len(extra_messages)} message(s) ({total_imgs} screenshot(s))",
+                    inline=False
+                )
 
             view = SafeView(timeout=180)
             view.add_item(discord.ui.Button(label="View Issue on GitHub", url=created["url"]))
@@ -740,7 +857,7 @@ class Bot(discord.Client):
                 publish_btn = discord.ui.Button(label="Publish to Channel", style=discord.ButtonStyle.success)
 
                 async def publish_callback(btn_interaction: discord.Interaction):
-                    if btn_interaction.user.id != self.config.owner_id:
+                    if not self.state.is_admin(btn_interaction.user.id, self.config.owner_id):
                         await self.discord_io.call(btn_interaction.response.send_message, "Access denied.", ephemeral=True)
                         return
                     await self.discord_io.call(interaction.channel.send, content)

@@ -43,8 +43,9 @@ def verify(payload, signature, key, owner=None):
     return payload
 
 
-def authorized(user_id, guild_id, channel_id, config):
-    return (user_id, guild_id, channel_id) == (config.owner_id, config.guild_id, config.channel_id)
+def authorized(user_id, guild_id, channel_id, config, state=None):
+    is_adm = (user_id == config.owner_id) if not state else state.is_admin(user_id, config.owner_id)
+    return is_adm and (guild_id == config.guild_id) and (channel_id == config.channel_id)
 
 
 def safe_text(text, limit=1800):
