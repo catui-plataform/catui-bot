@@ -335,22 +335,121 @@ def core_card(item, state, config):
     return embed
 
 
-def extract_message_ids(raw):
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+DISCORD_MSG_LINK_RE = re.compile(r"https?://(?:ptb\.|canary\.)?discord(?:app)?\.com/channels/(\d+)/(\d+)/(\d+)")
+
+
+def parse_message_inputs(raw):
+    """
+    Parses a string or sequence containing any combination of:
+    - Discord message URLs (https://discord.com/channels/<guild>/<channel>/<id>)
+    - Discord message snowflake IDs (123456789012345678)
+    - Direct image URLs (https://.../photo.png, discord CDN links)
+    Returns:
+    - msg_refs: list of dicts with {"guild_id": Optional[int], "channel_id": Optional[int], "message_id": int}
+    - direct_images: list of dicts with {"filename": str, "url": str}
+    """
     if not raw:
-        return []
-    ids = []
+        return [], []
+    msg_refs = []
+    direct_images = []
     tokens = re.split(r"[\s,;]+", str(raw).strip())
+    seen_ids = set()
+    seen_urls = set()
+
     for t in tokens:
         t = t.strip()
         if not t:
             continue
+        lower = t.lower()
+        if any(lower.endswith(ext) for ext in IMAGE_EXTS) or ("cdn.discordapp.com/attachments/" in lower) or ("media.discordapp.net/attachments/" in lower):
+            if t not in seen_urls:
+                seen_urls.add(t)
+                fn = t.split("/")[-1].split("?")[0] or "Screenshot"
+                direct_images.append({"filename": fn, "url": t})
+            continue
+
+        match = DISCORD_MSG_LINK_RE.search(t)
+        if match:
+            mid = int(match.group(3))
+            if mid not in seen_ids:
+                seen_ids.add(mid)
+                msg_refs.append({
+                    "guild_id": int(match.group(1)),
+                    "channel_id": int(match.group(2)),
+                    "message_id": mid
+                })
+            continue
+
         if "/" in t:
             last = t.rstrip("/").split("/")[-1]
             if re.fullmatch(r"\d{15,22}", last):
-                ids.append(int(last))
-        elif re.fullmatch(r"\d{15,22}", t):
-            ids.append(int(t))
-    return list(dict.fromkeys(ids))
+                mid = int(last)
+                if mid not in seen_ids:
+                    seen_ids.add(mid)
+                    msg_refs.append({"guild_id": None, "channel_id": None, "message_id": mid})
+                continue
+
+        if re.fullmatch(r"\d{15,22}", t):
+            mid = int(t)
+            if mid not in seen_ids:
+                seen_ids.add(mid)
+                msg_refs.append({"guild_id": None, "channel_id": None, "message_id": mid})
+
+    return msg_refs, direct_images
+
+
+def extract_message_ids(raw):
+    refs, _ = parse_message_inputs(raw)
+    return [r["message_id"] for r in refs]
+
+
+async def find_existing_issue_in_thread(target, target_repo=None):
+    if not target or not hasattr(target, "history"):
+        return None
+    try:
+        async for msg in target.history(limit=50):
+            for emb in getattr(msg, "embeds", []):
+                if emb.title:
+                    m = re.search(r"GitHub Issue #(\d+)", emb.title, re.IGNORECASE)
+                    if m:
+                        num = int(m.group(1))
+                        url = emb.url or (f"https://github.com/{target_repo}/issues/{num}" if target_repo else "")
+                        return {"repo": target_repo or "", "issue_number": num, "issue_url": url}
+                if emb.url:
+                    m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/issues/(\d+)", emb.url)
+                    if m:
+                        r = m.group(1)
+                        if not target_repo or r.lower() == target_repo.lower():
+                            return {"repo": r, "issue_number": int(m.group(2)), "issue_url": emb.url}
+                if emb.description:
+                    m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/issues/(\d+)", emb.description)
+                    if m:
+                        r = m.group(1)
+                        if not target_repo or r.lower() == target_repo.lower():
+                            url = f"https://github.com/{r}/issues/{m.group(2)}"
+                            return {"repo": r, "issue_number": int(m.group(2)), "issue_url": url}
+
+            for comp in getattr(msg, "components", []):
+                for child in getattr(comp, "children", []):
+                    url = getattr(child, "url", None)
+                    if url:
+                        m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/issues/(\d+)", url)
+                        if m:
+                            r = m.group(1)
+                            if not target_repo or r.lower() == target_repo.lower():
+                                return {"repo": r, "issue_number": int(m.group(2)), "issue_url": url}
+
+            if msg.content:
+                m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/issues/(\d+)", msg.content)
+                if m:
+                    r = m.group(1)
+                    if not target_repo or r.lower() == target_repo.lower():
+                        url = f"https://github.com/{r}/issues/{m.group(2)}"
+                        return {"repo": r, "issue_number": int(m.group(2)), "issue_url": url}
+    except Exception as exc:
+        log.warning("Scanning thread history for existing issue failed: %s", exc)
+    return None
 
 
 class OwnerTree(app_commands.CommandTree):
@@ -722,12 +821,26 @@ class Bot(discord.Client):
 
         @self.tree.command(name="issue", description="Create or update a GitHub issue in arthiee4/catui-main from this gallery post", guild=guild)
         @app_commands.describe(
-            description="Optional extra details or maintainer notes for the issue",
-            messages="Optional: message IDs or links (comma/space separated) to include extra comments/screenshots",
+            description="Optional extra details or maintainer notes for the issue/update",
+            messages="Optional: message IDs or links (space/comma separated) to include extra comments/screenshots",
+            messages2="Optional: additional message IDs or links if needed",
+            attachment="Optional: screenshot or file to attach to the issue/update",
+            attachment2="Optional: second screenshot or file to attach",
+            attachment3="Optional: third screenshot or file to attach",
             force_new="Set to True to force creating a new issue instead of updating the existing one for this thread",
             thread="Optional: specify an issue thread if not running directly inside it"
         )
-        async def issue_cmd(interaction: discord.Interaction, description: str = None, messages: str = None, force_new: bool = False, thread: discord.Thread = None):
+        async def issue_cmd(
+            interaction: discord.Interaction,
+            description: str = None,
+            messages: str = None,
+            messages2: str = None,
+            attachment: discord.Attachment = None,
+            attachment2: discord.Attachment = None,
+            attachment3: discord.Attachment = None,
+            force_new: bool = False,
+            thread: discord.Thread = None
+        ):
             await self.discord_io.call(interaction.response.defer, ephemeral=False)
             target = thread or (interaction.channel if isinstance(interaction.channel, discord.Thread) else None)
             if not target:
@@ -768,16 +881,54 @@ class Bot(discord.Client):
                 "files": starter_files
             }
 
+            # Check existing issue for this thread (SQLite first, then scan thread history fallback)
+            target_repo = self.config.issues_repo
+            existing = None
+            if not force_new:
+                existing = self.state.get_thread_issue(target.id)
+                if not existing:
+                    existing = await find_existing_issue_in_thread(target, target_repo)
+                    if existing:
+                        self.state.save_thread_issue(target.id, existing["repo"], existing["issue_number"], existing["issue_url"])
+
+            # Combine message inputs and parse
+            raw_messages = " ".join(filter(None, [messages, messages2]))
+            msg_refs, parsed_images = parse_message_inputs(raw_messages)
+
+            # Direct attachments from command parameters + parsed image links
+            all_direct_attachments = list(parsed_images)
+            for att in (attachment, attachment2, attachment3):
+                if att:
+                    all_direct_attachments.append({"filename": att.filename, "url": att.url})
+
             # Process extra messages
             extra_messages = []
-            msg_ids = extract_message_ids(messages)
-            for mid in msg_ids:
+            for ref in msg_refs:
+                mid = ref["message_id"]
+                cid = ref.get("channel_id")
                 if starter_msg and mid == starter_msg.id:
                     continue
-                try:
-                    m = await self.discord_io.call(target.fetch_message, mid)
-                except Exception:
+                m = None
+                if cid:
+                    try:
+                        ch = self.get_channel(cid) or await self.discord_io.call(self.fetch_channel, cid)
+                        if ch:
+                            m = await self.discord_io.call(ch.fetch_message, mid)
+                    except Exception:
+                        m = None
+                if not m:
+                    try:
+                        m = await self.discord_io.call(target.fetch_message, mid)
+                    except Exception:
+                        parent = getattr(target, "parent", None)
+                        if parent:
+                            try:
+                                m = await self.discord_io.call(parent.fetch_message, mid)
+                            except Exception:
+                                m = None
+                if not m:
                     continue
+
                 m_imgs = []
                 m_files = []
                 for att in m.attachments:
@@ -786,6 +937,16 @@ class Bot(discord.Client):
                         m_imgs.append({"filename": att.filename, "url": att.url})
                     else:
                         m_files.append({"filename": att.filename, "url": att.url})
+
+                # Check text for embedded image URLs
+                for url in re.findall(r"https?://\S+", m.content or ""):
+                    cleaned = url.rstrip(")>],.;")
+                    lower = cleaned.lower()
+                    if any(lower.endswith(e) for e in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")) or ("cdn.discordapp.com/attachments/" in lower) or ("media.discordapp.net/attachments/" in lower):
+                        if not any(i["url"] == cleaned for i in m_imgs):
+                            fn = cleaned.split("/")[-1].split("?")[0] or "Screenshot"
+                            m_imgs.append({"filename": fn, "url": cleaned})
+
                 extra_messages.append({
                     "id": m.id,
                     "author": m.author.display_name,
@@ -800,9 +961,11 @@ class Bot(discord.Client):
                     thread_title=target.name,
                     starter=starter_data,
                     extra_messages=extra_messages,
+                    attachments=all_direct_attachments,
                     description=description,
                     thread_id=target.id,
-                    force_new=force_new
+                    force_new=force_new,
+                    existing_issue=existing
                 )
             except RemoteError as exc:
                 if exc.status in {401, 403, 404}:
@@ -835,13 +998,15 @@ class Bot(discord.Client):
             embed.add_field(name="Labels", value=f"`{labels_str}`", inline=True)
             if starter_data["author"]:
                 embed.add_field(name="Reported by", value=starter_data["author"], inline=True)
-            if extra_messages:
-                total_imgs = sum(len(m["images"]) for m in extra_messages)
+            if extra_messages or all_direct_attachments:
+                total_imgs = sum(len(m["images"]) for m in extra_messages) + len([a for a in all_direct_attachments if any(str(a["url"]).lower().endswith(e) for e in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"))])
                 embed.add_field(
                     name="Extra Context Included",
-                    value=f"{len(extra_messages)} message(s) ({total_imgs} screenshot(s))",
+                    value=f"{len(extra_messages)} message(s) ({total_imgs} screenshot(s)/file(s))",
                     inline=False
                 )
+            if is_updated and description:
+                embed.add_field(name="Maintainer Update Note", value=description[:1000], inline=False)
 
             view = SafeView(timeout=180)
             view.add_item(discord.ui.Button(label="View Issue (Admin Only)", url=created["url"]))

@@ -15,7 +15,7 @@ from catui_bot.upstream import Upstream
 from catui_bot.service import Service
 from catui_bot.state import State
 from catui_bot.http import RemoteError
-from catui_bot.discord_app import Bot, OwnerTree, extract_message_ids
+from catui_bot.discord_app import Bot, OwnerTree, extract_message_ids, parse_message_inputs, find_existing_issue_in_thread
 
 
 class IssueAndReleaseLLMTests(unittest.TestCase):
@@ -25,6 +25,24 @@ class IssueAndReleaseLLMTests(unittest.TestCase):
         self.assertEqual(ids, [1460650067139756165, 1460650067139756166, 1460650067139756167])
         self.assertEqual(extract_message_ids(""), [])
         self.assertEqual(extract_message_ids(None), [])
+
+    def test_parse_message_inputs(self):
+        raw = (
+            "1460650067139756165 https://discord.com/channels/123456789012345678/999888777666555444/1460650067139756166 "
+            "https://cdn.discordapp.com/attachments/111/222/screenshot.png https://imgur.com/gallery/error.jpg"
+        )
+        refs, direct_imgs = parse_message_inputs(raw)
+        self.assertEqual(len(refs), 2)
+        self.assertEqual(refs[0]["message_id"], 1460650067139756165)
+        self.assertIsNone(refs[0]["channel_id"])
+        self.assertEqual(refs[1]["message_id"], 1460650067139756166)
+        self.assertEqual(refs[1]["channel_id"], 999888777666555444)
+
+        self.assertEqual(len(direct_imgs), 2)
+        self.assertEqual(direct_imgs[0]["url"], "https://cdn.discordapp.com/attachments/111/222/screenshot.png")
+        self.assertEqual(direct_imgs[0]["filename"], "screenshot.png")
+        self.assertEqual(direct_imgs[1]["url"], "https://imgur.com/gallery/error.jpg")
+        self.assertEqual(direct_imgs[1]["filename"], "error.jpg")
 
     def test_strip_emojis(self):
         text = "🔥 Bug with audio! 🎧 Crashes on start 💥"
@@ -378,6 +396,96 @@ Closed testing on Windows.
 
         finally:
             bot.state.close()
+
+    def test_fallback_issue_update_mode(self):
+        starter = {
+            "author": "GamerOne",
+            "is_admin": False,
+            "content": "Game fails to load texture.",
+            "images": [{"filename": "initial.png", "url": "https://cdn.discord.com/initial.png"}],
+            "files": []
+        }
+        extra = [{
+            "id": 999,
+            "author": "TesterTwo",
+            "is_admin": False,
+            "content": "Happens every time on chapter 2! 🚀",
+            "images": [{"filename": "chapter2.png", "url": "https://cdn.discord.com/chapter2.png"}],
+            "files": []
+        }]
+        direct_attachments = [{"filename": "log.txt", "url": "https://cdn.discord.com/log.txt"}]
+
+        res = Assistant.fallback_issue(
+            thread_title="💥 Texture bug",
+            starter=starter,
+            extra_messages=extra,
+            attachments=direct_attachments,
+            description="Investigated in core render loop.",
+            is_update=True
+        )
+
+        self.assertNotIn("💥", res["title"])
+        self.assertNotIn("🚀", res["body"])
+        self.assertIn("comment", res)
+        comment = res["comment"]
+        self.assertIn("### Update from Discord Thread", comment)
+        self.assertIn("Investigated in core render loop.", comment)
+        self.assertIn("@TesterTwo", comment)
+        self.assertIn("![chapter2.png](https://cdn.discord.com/chapter2.png)", comment)
+        self.assertNotIn("🚀", comment)
+
+    async def test_find_existing_issue_in_thread(self):
+        # 1. Thread with embed title "GitHub Issue #88"
+        class MockHistory:
+            def __init__(self, messages):
+                self.messages = messages
+            def __aiter__(self):
+                self._iter = iter(self.messages)
+                return self
+            async def __anext__(self):
+                try:
+                    return next(self._iter)
+                except StopIteration:
+                    raise StopAsyncIteration
+
+        msg_embed = SimpleNamespace(
+            embeds=[
+                SimpleNamespace(
+                    title="GitHub Issue #88 (Updated)",
+                    url="https://github.com/arthiee4/catui-main/issues/88",
+                    description="Issue details"
+                )
+            ],
+            components=[],
+            content=""
+        )
+        thread1 = SimpleNamespace(history=lambda limit=50: MockHistory([msg_embed]))
+        found1 = await find_existing_issue_in_thread(thread1, "arthiee4/catui-main")
+        self.assertIsNotNone(found1)
+        self.assertEqual(found1["issue_number"], 88)
+        self.assertEqual(found1["repo"], "arthiee4/catui-main")
+
+        # 2. Thread with component button URL
+        btn = SimpleNamespace(url="https://github.com/arthiee4/catui-main/issues/99")
+        comp = SimpleNamespace(children=[btn])
+        msg_comp = SimpleNamespace(embeds=[], components=[comp], content="")
+        thread2 = SimpleNamespace(history=lambda limit=50: MockHistory([msg_comp]))
+        found2 = await find_existing_issue_in_thread(thread2, "arthiee4/catui-main")
+        self.assertIsNotNone(found2)
+        self.assertEqual(found2["issue_number"], 99)
+
+        # 3. Thread with message content link
+        msg_content = SimpleNamespace(embeds=[], components=[], content="Tracked at https://github.com/arthiee4/catui-main/issues/105")
+        thread3 = SimpleNamespace(history=lambda limit=50: MockHistory([msg_content]))
+        found3 = await find_existing_issue_in_thread(thread3, "arthiee4/catui-main")
+        self.assertIsNotNone(found3)
+        self.assertEqual(found3["issue_number"], 105)
+
+        # 4. Thread with no links returns None
+        msg_empty = SimpleNamespace(embeds=[], components=[], content="Just random chat")
+        thread4 = SimpleNamespace(history=lambda limit=50: MockHistory([msg_empty]))
+        found4 = await find_existing_issue_in_thread(thread4, "arthiee4/catui-main")
+        self.assertIsNone(found4)
 
 
 if __name__ == "__main__":

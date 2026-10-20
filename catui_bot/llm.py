@@ -134,39 +134,86 @@ class Assistant:
                            "prerelease": release["prerelease"], "description": release["body"][:10000]})
         return await self.request(system, data, 220)
 
-    async def format_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None):
-        system = (
-            "You are an expert GitHub issue organizer for CATui (a modern emulator frontend and launcher built in Godot).\n"
-            "Convert this Discord bug report or feature request into a clean, simplified, well-structured GitHub issue.\n"
-            "RULES:\n"
-            "1. Output MUST be valid JSON with exactly these keys: 'title', 'body', 'labels'.\n"
-            "2. 'title': A concise, clear summary of the issue. Plain text only. Strictly NO emojis.\n"
-            "3. 'body': Clean, well-structured GitHub markdown. Strictly NO emojis anywhere in the body.\n"
-            "   Structure the body cleanly:\n"
-            "   - ## Summary: Clear description of the problem or feature request.\n"
-            "   - ## Details & Reproduction: Steps, observed vs expected behavior, environment info.\n"
-            "   - ## User Reports & Comments: If there are comments/reports from non-admin users, include their quotes or observations.\n"
-            "   - ## Screenshots & Attachments: Embed screenshots visually using ![filename](url). List logs/other files as [filename](url).\n"
-            "   - ## Maintainer Notes: Any notes/observations from admins or maintainer notes passed in the prompt.\n"
-            "4. 'labels': JSON array of 1 to 4 clean, appropriate lowercase tags (e.g. ['bug', 'ui'], ['enhancement'], ['crash'], ['audio'], ['input']). Strictly NO emojis.\n"
-            "5. Do NOT invent reproduction steps or logs not present in the input. Keep it simplified and factual.\n"
-            "6. Output ONLY raw JSON, without markdown formatting or conversational filler."
-        )
-        starter_data = starter if isinstance(starter, dict) else {
-            "author": strip_emojis(reporter) if reporter else "User",
-            "is_admin": False,
-            "content": strip_emojis(starter),
-            "images": [{"filename": "Screenshot", "url": a} for a in (attachments or []) if any(str(a).lower().endswith(e) for e in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"))],
-            "files": [{"filename": "Attachment", "url": a} for a in (attachments or []) if not any(str(a).lower().endswith(e) for e in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"))]
-        }
+    async def format_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, is_update=False):
+        if is_update:
+            system = (
+                "You are an expert GitHub issue organizer for CATui (a modern emulator frontend and launcher built in Godot).\n"
+                "A user/admin is submitting an UPDATE to an existing GitHub issue from a Discord thread.\n"
+                "RULES:\n"
+                "1. Output MUST be valid JSON with exactly these keys: 'title', 'body', 'labels', 'comment'.\n"
+                "2. 'comment': A concise, well-structured GitHub update comment detailing the new observations, symptoms, user reports, and embedding screenshots using ![Screenshot](url). Strictly NO emojis.\n"
+                "3. 'body': The consolidated, complete GitHub issue description incorporating both the initial problem and the new findings. Strictly NO emojis.\n"
+                "4. 'title': Issue title (update if the problem is now clearer, otherwise keep). Strictly NO emojis.\n"
+                "5. 'labels': JSON array of 1 to 4 clean, appropriate lowercase tags. Strictly NO emojis.\n"
+                "6. Output ONLY raw JSON, without markdown code fences or conversational filler."
+            )
+        else:
+            system = (
+                "You are an expert GitHub issue organizer for CATui (a modern emulator frontend and launcher built in Godot).\n"
+                "Convert this Discord bug report or feature request into a clean, simplified, well-structured GitHub issue.\n"
+                "RULES:\n"
+                "1. Output MUST be valid JSON with exactly these keys: 'title', 'body', 'labels'.\n"
+                "2. 'title': A concise, clear summary of the issue. Plain text only. Strictly NO emojis.\n"
+                "3. 'body': Clean, well-structured GitHub markdown. Strictly NO emojis anywhere in the body.\n"
+                "   Structure the body cleanly:\n"
+                "   - ## Summary: Clear description of the problem or feature request.\n"
+                "   - ## Details & Reproduction: Steps, observed vs expected behavior, environment info.\n"
+                "   - ## User Reports & Comments: If there are comments/reports from non-admin users, include their quotes or observations.\n"
+                "   - ## Screenshots & Attachments: Embed screenshots visually using ![filename](url). List logs/other files as [filename](url).\n"
+                "   - ## Maintainer Notes: Any notes/observations from admins or maintainer notes passed in the prompt.\n"
+                "4. 'labels': JSON array of 1 to 4 clean, appropriate lowercase tags (e.g. ['bug', 'ui'], ['enhancement'], ['crash'], ['audio'], ['input']). Strictly NO emojis.\n"
+                "5. Do NOT invent reproduction steps or logs not present in the input. Keep it simplified and factual.\n"
+                "6. Output ONLY raw JSON, without markdown formatting or conversational filler."
+            )
+        if isinstance(starter, dict):
+            starter_data = dict(starter)
+            cur_imgs = list(starter_data.get("images") or [])
+            cur_files = list(starter_data.get("files") or [])
+            if attachments:
+                for a in attachments:
+                    if isinstance(a, dict):
+                        fn = a.get("filename", "Attachment")
+                        u = a.get("url", "")
+                    else:
+                        fn = str(a).split("/")[-1].split("?")[0] or "Attachment"
+                        u = str(a)
+                    if any(fn.lower().endswith(e) for e in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")):
+                        cur_imgs.append({"filename": fn, "url": u})
+                    else:
+                        cur_files.append({"filename": fn, "url": u})
+            starter_data["images"] = cur_imgs
+            starter_data["files"] = cur_files
+        else:
+            starter_imgs = []
+            starter_files = []
+            if attachments:
+                for a in attachments:
+                    if isinstance(a, dict):
+                        fn = a.get("filename", "Attachment")
+                        u = a.get("url", "")
+                    else:
+                        fn = str(a).split("/")[-1].split("?")[0] or "Attachment"
+                        u = str(a)
+                    if any(fn.lower().endswith(e) for e in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")):
+                        starter_imgs.append({"filename": fn, "url": u})
+                    else:
+                        starter_files.append({"filename": fn, "url": u})
+            starter_data = {
+                "author": strip_emojis(reporter) if reporter else "User",
+                "is_admin": False,
+                "content": strip_emojis(starter),
+                "images": starter_imgs,
+                "files": starter_files
+            }
         payload_data = {
             "thread_title": strip_emojis(thread_title),
             "starter": starter_data,
             "extra_messages": extra_messages or [],
-            "maintainer_notes": strip_emojis(description) if description else ""
+            "maintainer_notes": strip_emojis(description) if description else "",
+            "is_update": is_update
         }
         try:
-            raw = await self.request_raw(system, json.dumps(payload_data), 1400)
+            raw = await self.request_raw(system, json.dumps(payload_data), 1600)
             raw_clean = raw.strip()
             match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw_clean, re.DOTALL)
             if match:
@@ -178,14 +225,18 @@ class Assistant:
                 title = strip_emojis(parsed["title"]).strip() or strip_emojis(thread_title).strip()
                 body = strip_emojis(parsed["body"]).strip()
                 labels = sanitize_labels(parsed.get("labels"))
-                return {"title": title, "body": body, "labels": labels}
+                comment = strip_emojis(parsed.get("comment", "")).strip() if is_update else ""
+                res = {"title": title, "body": body, "labels": labels}
+                if comment:
+                    res["comment"] = comment
+                return res
         except Exception as exc:
             log.warning("DeepSeek issue formatting failed, using fallback: %s", type(exc).__name__)
 
-        return self.fallback_issue(thread_title, starter, extra_messages, reporter, attachments, description)
+        return self.fallback_issue(thread_title, starter, extra_messages, reporter, attachments, description, is_update=is_update)
 
     @staticmethod
-    def fallback_issue(thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None):
+    def fallback_issue(thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, is_update=False):
         title = strip_emojis(thread_title).strip() or "Issue Report from Discord"
         body_parts = []
 
@@ -196,18 +247,25 @@ class Assistant:
         admin_notes = []
         all_imgs = []
         all_files = []
+        media_lines = []
 
         if isinstance(starter, dict):
             for img in starter.get("images", []):
                 all_imgs.append(img)
             for f in starter.get("files", []):
                 all_files.append(f)
-        elif attachments:
+        if attachments:
             for a in attachments:
-                if any(str(a).lower().endswith(e) for e in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")):
-                    all_imgs.append({"filename": "Screenshot", "url": a})
+                if isinstance(a, dict):
+                    fn = a.get("filename", "Attachment")
+                    u = a.get("url", "")
                 else:
-                    all_files.append({"filename": "Attachment", "url": a})
+                    fn = str(a).split("/")[-1].split("?")[0] or "Attachment"
+                    u = str(a)
+                if any(fn.lower().endswith(e) for e in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")):
+                    all_imgs.append({"filename": fn, "url": u})
+                else:
+                    all_files.append({"filename": fn, "url": u})
 
         if extra_messages:
             for em in extra_messages:
@@ -228,7 +286,6 @@ class Assistant:
             body_parts.extend(["", "## User Reports & Comments", *user_comments])
 
         if all_imgs or all_files:
-            media_lines = []
             for img in all_imgs:
                 fn = strip_emojis(img.get("filename", "Screenshot"))
                 media_lines.append(f"![{fn}]({img['url']})")
@@ -251,11 +308,21 @@ class Assistant:
         if context_lines:
             body_parts.extend(["", "## Context", *context_lines])
 
-        return {
+        res = {
             "title": title,
             "body": "\n".join(body_parts),
             "labels": ["bug"]
         }
+        if is_update:
+            comment_parts = ["### Update from Discord Thread"]
+            if description and description.strip():
+                comment_parts.append(f"**Maintainer Note:** {strip_emojis(description).strip()}")
+            if user_comments:
+                comment_parts.append("**User Comments:**\n" + "\n".join(user_comments))
+            if media_lines:
+                comment_parts.append("**Screenshots & Attachments:**\n" + "\n".join(media_lines))
+            res["comment"] = "\n\n".join(comment_parts)
+        return res
 
     async def format_release(self, tag_name, release_name, release_body):
         system = (

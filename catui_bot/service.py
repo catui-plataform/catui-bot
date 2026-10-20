@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from .security import sign, validate_plan
 from .http import RemoteError
 from .config import CORE_IDS, CORE_NAMES
-from .llm import AssistantError
+from .llm import AssistantError, strip_emojis
 
 
 @dataclass
@@ -347,20 +347,22 @@ class Service:
                 self.state.transition(job["id"], job["status"], following)
 
 
-    async def create_github_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, repo=None, thread_id=None, force_new=False):
+    async def create_github_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, repo=None, thread_id=None, force_new=False, existing_issue=None):
         target_repo = repo or getattr(self.config, "issues_repo", "arthiee4/catui-main")
+        existing = existing_issue or (self.state.get_thread_issue(thread_id) if (thread_id and not force_new) else None)
+        is_update = bool(existing and existing.get("repo") == target_repo)
+
         formatted = await self.assistant.format_issue(
             thread_title=thread_title,
             starter=starter,
             extra_messages=extra_messages,
             reporter=reporter,
             attachments=attachments,
-            description=description
+            description=description,
+            is_update=is_update
         )
 
-        existing = self.state.get_thread_issue(thread_id) if (thread_id and not force_new) else None
-
-        if existing and existing.get("repo") == target_repo:
+        if is_update:
             issue_number = existing["issue_number"]
             issue_url = existing["issue_url"]
             result = await self.upstream.update_issue(
@@ -370,17 +372,25 @@ class Service:
                 body=formatted["body"],
                 labels=formatted.get("labels")
             )
-            comment_parts = ["### Update from Discord Thread", "Issue updated with the latest messages/notes from Discord."]
-            if description and description.strip():
-                comment_parts.append(f"\n**Maintainer Note:** {description.strip()}")
-            if extra_messages:
-                comment_parts.append(f"\n*Incorporated {len(extra_messages)} additional message(s) / screenshot(s).*")
+
+            comment_body = formatted.get("comment")
+            if not comment_body:
+                comment_parts = ["### Update from Discord Thread", "Issue updated with the latest messages/notes from Discord."]
+                if description and description.strip():
+                    comment_parts.append(f"\n**Maintainer Note:** {description.strip()}")
+                if extra_messages:
+                    comment_parts.append(f"\n*Incorporated {len(extra_messages)} additional message(s) / screenshot(s).*")
+                comment_body = "\n".join(comment_parts)
+            comment_body = strip_emojis(comment_body).strip()
+
             try:
-                await self.upstream.add_issue_comment(target_repo, issue_number, "\n".join(comment_parts))
+                await self.upstream.add_issue_comment(target_repo, issue_number, comment_body)
             except Exception:
                 pass
 
-            self.state.save_thread_issue(thread_id, target_repo, issue_number, issue_url)
+            if thread_id:
+                self.state.save_thread_issue(thread_id, target_repo, issue_number, issue_url)
+
             return {
                 "repo": target_repo,
                 "title": formatted["title"],
@@ -388,7 +398,8 @@ class Service:
                 "labels": result.get("labels") or formatted.get("labels", []),
                 "url": issue_url,
                 "number": issue_number,
-                "action": "updated"
+                "action": "updated",
+                "comment": comment_body
             }
 
         result = await self.upstream.create_issue(
