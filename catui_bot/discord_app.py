@@ -822,36 +822,33 @@ class Bot(discord.Client):
         @self.tree.command(name="issue", description="Create or update a GitHub issue in arthiee4/catui-main from this gallery post", guild=guild)
         @app_commands.describe(
             description="Optional extra details or maintainer notes for the issue/update",
-            messages="Optional: message IDs or links (space/comma separated) to include extra comments/screenshots",
-            messages2="Optional: additional message IDs or links if needed",
-            attachment="Optional: screenshot or file to attach to the issue/update",
-            attachment2="Optional: second screenshot or file to attach",
-            attachment3="Optional: third screenshot or file to attach",
-            new="Set to True to create a new issue instead of updating the existing one for this thread",
-            thread="Optional: specify an issue thread if not running directly inside it"
+            messages="Optional message IDs or links (space-separated, e.g. 1562184884800192664 1562184933428957195)",
+            attachment="Optional screenshot or file to attach to the issue/update",
+            new="Set to True to create a new issue instead of updating the existing one"
         )
         async def issue_cmd(
             interaction: discord.Interaction,
             description: str = None,
             messages: str = None,
-            messages2: str = None,
             attachment: discord.Attachment = None,
-            attachment2: discord.Attachment = None,
-            attachment3: discord.Attachment = None,
-            new: bool = False,
-            thread: discord.Thread = None
+            new: bool = False
         ):
             await self.discord_io.call(interaction.response.defer, ephemeral=False)
-            target = thread or (interaction.channel if isinstance(interaction.channel, discord.Thread) else None)
-            if not target:
+            target = interaction.channel
+            is_thread = isinstance(target, discord.Thread) or getattr(target, "type", None) in (
+                discord.ChannelType.public_thread,
+                discord.ChannelType.private_thread,
+                discord.ChannelType.news_thread
+            )
+            if not is_thread:
                 await self.discord_io.call(
                     interaction.followup.send,
-                    f"Please run this command inside an issue post/thread in <#{self.config.issues_channel_id}>, or pass the thread option.",
+                    f"Please run this command inside an issue post/thread in <#{self.config.issues_channel_id}>.",
                     ephemeral=True
                 )
                 return
 
-            starter_msg = target.starter_message
+            starter_msg = getattr(target, "starter_message", None)
             if starter_msg is None:
                 try:
                     starter_msg = await self.discord_io.call(target.fetch_message, target.id)
@@ -882,7 +879,7 @@ class Bot(discord.Client):
             }
 
             # Check existing issue for this thread (SQLite first, then scan thread history fallback)
-            target_repo = self.config.issues_repo
+            target_repo = self.config.issues_repo.strip()
             existing = None
             if not new:
                 existing = self.state.get_thread_issue(target.id)
@@ -891,15 +888,13 @@ class Bot(discord.Client):
                     if existing:
                         self.state.save_thread_issue(target.id, existing["repo"], existing["issue_number"], existing["issue_url"])
 
-            # Combine message inputs and parse
-            raw_messages = " ".join(filter(None, [messages, messages2]))
-            msg_refs, parsed_images = parse_message_inputs(raw_messages)
+            # Parse message inputs (supports unlimited space/comma-separated IDs or links)
+            msg_refs, parsed_images = parse_message_inputs(messages)
 
-            # Direct attachments from command parameters + parsed image links
+            # Direct attachments from command parameter + parsed image links
             all_direct_attachments = list(parsed_images)
-            for att in (attachment, attachment2, attachment3):
-                if att:
-                    all_direct_attachments.append({"filename": att.filename, "url": att.url})
+            if attachment:
+                all_direct_attachments.append({"filename": attachment.filename, "url": attachment.url})
 
             # Process extra messages
             extra_messages = []
@@ -968,7 +963,12 @@ class Bot(discord.Client):
                     existing_issue=existing
                 )
             except RemoteError as exc:
-                if exc.status in {401, 403, 404}:
+                if exc.status == 410:
+                    err_msg = (
+                        f"GitHub returned HTTP 410 (Gone): Issues are disabled on repository `{self.config.issues_repo}`.\n"
+                        f"Please enable Issues in GitHub: https://github.com/{self.config.issues_repo}/settings -> Features -> Check 'Issues'."
+                    )
+                elif exc.status in {401, 403, 404}:
                     err_msg = (
                         f"GitHub returned HTTP {exc.status}. "
                         f"Please ensure the bot's GITHUB_TOKEN has write access to `{self.config.issues_repo}`."

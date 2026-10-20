@@ -348,10 +348,15 @@ class Service:
 
 
     async def create_github_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, repo=None, thread_id=None, new=False, force_new=False, existing_issue=None):
-        target_repo = repo or getattr(self.config, "issues_repo", "arthiee4/catui-main")
-        is_new = new or force_new
+        target_repo = (repo or getattr(self.config, "issues_repo", "arthiee4/catui-main")).strip()
+        is_new = bool(new or force_new)
         existing = existing_issue or (self.state.get_thread_issue(thread_id) if (thread_id and not is_new) else None)
-        is_update = bool(existing and existing.get("repo") == target_repo)
+        is_update = bool(
+            not is_new
+            and existing
+            and existing.get("issue_number")
+            and str(existing.get("repo", "")).lower().strip("/") == target_repo.lower().strip("/")
+        )
 
         formatted = await self.assistant.format_issue(
             thread_title=thread_title,
@@ -409,8 +414,8 @@ class Service:
             body=formatted["body"],
             labels=formatted.get("labels")
         )
-        if thread_id:
-            self.state.save_thread_issue(thread_id, target_repo, result.get("number", 0), result.get("url", ""))
+        if thread_id and result.get("number"):
+            self.state.save_thread_issue(thread_id, target_repo, result["number"], result.get("url", ""))
 
         return {
             "repo": target_repo,
