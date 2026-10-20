@@ -829,12 +829,14 @@ class Bot(discord.Client):
         @self.tree.command(name="issue", description="Create or update a GitHub issue in arthiee4/catui-main from this gallery post", guild=guild)
         @app_commands.describe(
             message="Optional text note, message IDs, or links (space-separated, e.g. 'another test 1562184884800192664')",
-            new="Set to True to create a new issue instead of updating the existing one"
+            new="Set to True to create a new issue instead of updating the existing one",
+            solved="Set to True to mark this issue as solved and close it on GitHub"
         )
         async def issue_cmd(
             interaction: discord.Interaction,
             message: str = None,
-            new: bool = False
+            new: bool = False,
+            solved: bool = False
         ):
             await self.discord_io.call(interaction.response.defer, ephemeral=False)
             target = interaction.channel
@@ -894,6 +896,18 @@ class Bot(discord.Client):
             # Parse message input (separates message IDs/links, direct images, and text notes)
             msg_refs, parsed_images, note_text = parse_message_inputs(message)
             all_direct_attachments = list(parsed_images)
+            is_solved = bool(solved)
+            if not is_solved and note_text:
+                note_lower = note_text.lower().strip()
+                if note_lower in ("solved", "--solved"):
+                    is_solved = True
+                    note_text = ""
+                elif note_lower.endswith(" solved"):
+                    is_solved = True
+                    note_text = note_text[:-7].strip()
+                elif note_lower.startswith("solved "):
+                    is_solved = True
+                    note_text = note_text[7:].strip()
 
             # Process extra messages
             extra_messages = []
@@ -957,7 +971,8 @@ class Bot(discord.Client):
                     description=note_text,
                     thread_id=target.id,
                     new=new,
-                    existing_issue=existing
+                    existing_issue=existing,
+                    solved=is_solved
                 )
             except RemoteError as exc:
                 if exc.status == 410:
@@ -978,23 +993,37 @@ class Bot(discord.Client):
                 await self.discord_io.call(interaction.followup.send, f"Failed to create issue: {exc}", ephemeral=True)
                 return
 
-            is_updated = created.get("action") == "updated"
+            action = created.get("action", "")
+            is_action_solved = action == "solved"
+            is_updated = action == "updated"
             labels_str = ", ".join(created["labels"]) if created["labels"] else "none"
-            title_text = f"GitHub Issue #{created['number']} (Updated)" if is_updated else f"GitHub Issue #{created['number']}"
-            desc_text = (
-                f"**[{created['title']}]({created['url']})**\n*(Updated existing issue on GitHub with latest notes & comments)*"
-                if is_updated else f"**[{created['title']}]({created['url']})**"
-            )
+
+            if is_action_solved:
+                title_text = f"GitHub Issue #{created['number']} (Solved)"
+                desc_text = f"**[{created['title']}]({created['url']})**\n*(Issue marked as solved and closed on GitHub)*"
+                embed_color = 0x2ecc71
+            elif is_updated:
+                title_text = f"GitHub Issue #{created['number']} (Updated)"
+                desc_text = f"**[{created['title']}]({created['url']})**\n*(Updated existing issue on GitHub with latest notes & comments)*"
+                embed_color = 0x5865F2
+            else:
+                title_text = f"GitHub Issue #{created['number']}"
+                desc_text = f"**[{created['title']}]({created['url']})**"
+                embed_color = 0x57F287
+
             embed = discord.Embed(
                 title=title_text,
                 url=created["url"],
                 description=desc_text,
-                color=0x5865F2 if is_updated else 0x57F287
+                color=embed_color
             )
             embed.add_field(name="Repository", value=f"`{created['repo']}`", inline=True)
             embed.add_field(name="Labels", value=f"`{labels_str}`", inline=True)
-            if starter_data["author"]:
+            if is_action_solved:
+                embed.add_field(name="Status", value="`Closed (Solved)`", inline=True)
+            elif starter_data["author"]:
                 embed.add_field(name="Reported by", value=starter_data["author"], inline=True)
+
             if extra_messages or all_direct_attachments:
                 total_imgs = sum(len(m["images"]) for m in extra_messages) + len([a for a in all_direct_attachments if any(str(a["url"]).lower().endswith(e) for e in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"))])
                 embed.add_field(
@@ -1002,12 +1031,22 @@ class Bot(discord.Client):
                     value=f"{len(extra_messages)} message(s) ({total_imgs} screenshot(s)/file(s))",
                     inline=False
                 )
-            if is_updated and note_text:
-                embed.add_field(name="Maintainer Update Note", value=note_text[:1000], inline=False)
+            if (is_updated or is_action_solved) and note_text:
+                field_title = "Maintainer Resolution Note" if is_action_solved else "Maintainer Update Note"
+                embed.add_field(name=field_title, value=note_text[:1000], inline=False)
 
             view = SafeView(timeout=180)
             view.add_item(discord.ui.Button(label="View Issue (Admin Only)", url=created["url"]))
             await self.discord_io.call(interaction.followup.send, embed=embed, view=view)
+
+            if is_action_solved and hasattr(target, "parent") and hasattr(target.parent, "available_tags") and hasattr(target, "applied_tags"):
+                try:
+                    solved_tag = next((t for t in target.parent.available_tags if t.name.lower() in ("solved", "resolvido", "fechado")), None)
+                    if solved_tag and solved_tag not in target.applied_tags:
+                        new_tags = list(target.applied_tags) + [solved_tag]
+                        await self.discord_io.call(target.edit, applied_tags=new_tags)
+                except Exception:
+                    pass
 
         @self.tree.command(name="release", description="Format the latest CATui release into the official announcement template", guild=guild)
         @app_commands.describe(

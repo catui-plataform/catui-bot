@@ -66,6 +66,22 @@ class IssueAndReleaseLLMTests(unittest.TestCase):
         self.assertEqual(sanitize_labels([]), ["bug"])
         self.assertEqual(sanitize_labels(None), ["bug"])
 
+    def test_canonicalize_labels(self):
+        from catui_bot.llm import canonicalize_labels
+        # Direct canonical tags
+        self.assertEqual(canonicalize_labels(["catui", "cores", "seamless", "compat", "bug", "enhancement"]),
+                         ["catui", "cores", "seamless", "compat", "bug", "enhancement"])
+        # Aliases mapped
+        self.assertEqual(canonicalize_labels(["ui", "interface", "menu"]), ["catui"])
+        self.assertEqual(canonicalize_labels(["pcsx2", "libretro", "emulator"]), ["cores"])
+        self.assertEqual(canonicalize_labels(["runtime"]), ["seamless"])
+        self.assertEqual(canonicalize_labels(["compatibility", "roms", "game"]), ["compat"])
+        self.assertEqual(canonicalize_labels(["crash", "error", "glitch"]), ["bug"])
+        self.assertEqual(canonicalize_labels(["feature", "suggestion"]), ["enhancement"])
+        # Fallback for empty or unknown
+        self.assertEqual(canonicalize_labels(["unknown_tag_xyz"]), ["catui", "bug"])
+        self.assertEqual(canonicalize_labels([]), ["catui", "bug"])
+
     def test_fallback_issue_with_multi_messages_and_roles(self):
         starter = {
             "author": "PlayerOne",
@@ -200,7 +216,7 @@ class IssueAndReleaseAsyncTests(unittest.IsolatedAsyncioTestCase):
             reporter="TestUser"
         )
         self.assertEqual(result["title"], "Audio settings crash with bluetooth headset")
-        self.assertEqual(result["labels"], ["bug", "audio", "crash"])
+        self.assertEqual(result["labels"], ["bug", "catui"])
         self.assertIn("## Summary", result["body"])
 
     async def test_assistant_format_issue_guards_against_hallucinations_on_update(self):
@@ -444,6 +460,33 @@ Closed testing on Windows.
         self.upstream.create_issue.assert_awaited_once()
         mapping = self.state.get_thread_issue(555666777)
         self.assertEqual(mapping["issue_number"], 103)
+
+        # 5. Running with solved=True closes the issue on GitHub
+        self.upstream.update_issue.reset_mock()
+        self.upstream.update_issue.side_effect = None
+        self.upstream.update_issue.return_value = {
+            "url": "https://github.com/arthiee4/catui-main/issues/103",
+            "number": 103,
+            "labels": ["bug", "ui"]
+        }
+        self.upstream.add_issue_comment.reset_mock()
+        solved_res = await self.service.create_github_issue(
+            thread_title="Bug Report",
+            starter={"author": "User1", "content": "Initial text", "is_admin": False, "images": [], "files": []},
+            description="Fixed in branch main",
+            thread_id=555666777,
+            solved=True
+        )
+        self.assertEqual(solved_res["action"], "solved")
+        self.upstream.update_issue.assert_awaited_once_with(
+            repo="arthiee4/catui-main",
+            issue_number=103,
+            title="Updated Title",
+            body="Updated Body with Extra Notes",
+            labels=["bug", "ui"],
+            state="closed",
+            state_reason="completed"
+        )
 
     async def test_owner_tree_permissions_and_admin_delegation(self):
         bot = Bot(self.config)

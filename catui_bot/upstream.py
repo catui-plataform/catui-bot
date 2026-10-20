@@ -7,6 +7,16 @@ from .config import BOT_REPO, CORE_IDS, ROOT, STORE_REPO
 from .http import RemoteError
 
 
+CANONICAL_GITHUB_LABELS = [
+    {"name": "catui", "color": "5319e7", "description": "CATui frontend, UI, menus, themes and settings"},
+    {"name": "cores", "color": "006b75", "description": "Emulator cores and libretro integration"},
+    {"name": "seamless", "color": "0e8a16", "description": "Seamless runtime and execution"},
+    {"name": "compat", "color": "fbca04", "description": "Game compatibility and ROM loading"},
+    {"name": "bug", "color": "d73a4a", "description": "Something isn't working"},
+    {"name": "enhancement", "color": "a2eeef", "description": "New feature or request"},
+]
+
+
 class Upstream:
     def __init__(self, http):
         self.http = http
@@ -176,6 +186,13 @@ class Upstream:
 
         return "Dispatching workflow to runner"
 
+    async def ensure_canonical_labels(self, repo):
+        for lbl in CANONICAL_GITHUB_LABELS:
+            url = f"https://api.github.com/repos/{repo}/labels"
+            try:
+                await self.http.json(url, method="POST", payload=lbl)
+            except Exception:
+                pass
 
     async def create_issue(self, repo, title, body, labels=None):
         url = f"https://api.github.com/repos/{repo}/issues"
@@ -196,7 +213,7 @@ class Upstream:
             "labels": [l.get("name", "") for l in data.get("labels", []) if isinstance(l, dict)]
         }
 
-    async def update_issue(self, repo, issue_number, title=None, body=None, labels=None):
+    async def update_issue(self, repo, issue_number, title=None, body=None, labels=None, state=None, state_reason=None):
         url = f"https://api.github.com/repos/{repo}/issues/{issue_number}"
         payload = {}
         if title is not None:
@@ -205,6 +222,10 @@ class Upstream:
             payload["body"] = body
         if labels is not None:
             payload["labels"] = list(labels)
+        if state is not None:
+            payload["state"] = state
+        if state_reason is not None:
+            payload["state_reason"] = state_reason
         try:
             data = await self.http.json(url, method="PATCH", payload=payload)
         except RemoteError as exc:
@@ -216,6 +237,7 @@ class Upstream:
         return {
             "url": data.get("html_url", ""),
             "number": data.get("number", issue_number),
+            "state": data.get("state", "open"),
             "labels": [l.get("name", "") for l in data.get("labels", []) if isinstance(l, dict)]
         }
 

@@ -347,7 +347,7 @@ class Service:
                 self.state.transition(job["id"], job["status"], following)
 
 
-    async def create_github_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, repo=None, thread_id=None, new=False, force_new=False, existing_issue=None):
+    async def create_github_issue(self, thread_title, starter, extra_messages=None, reporter=None, attachments=None, description=None, repo=None, thread_id=None, new=False, force_new=False, existing_issue=None, solved=False):
         target_repo = (repo or getattr(self.config, "issues_repo", "arthiee4/catui-main")).strip()
         is_new = bool(new or force_new)
         existing = existing_issue or (self.state.get_thread_issue(thread_id) if (thread_id and not is_new) else None)
@@ -365,7 +365,8 @@ class Service:
             reporter=reporter,
             attachments=attachments,
             description=description,
-            is_update=is_update
+            is_update=is_update,
+            solved=solved
         )
 
         if is_update:
@@ -377,7 +378,9 @@ class Service:
                     issue_number=issue_number,
                     title=formatted["title"],
                     body=formatted["body"],
-                    labels=formatted.get("labels")
+                    labels=formatted.get("labels"),
+                    state="closed" if solved else None,
+                    state_reason="completed" if solved else None
                 )
             except RemoteError as exc:
                 if exc.status in {404, 410}:
@@ -413,7 +416,7 @@ class Service:
                     "labels": result.get("labels") or formatted.get("labels", []),
                     "url": issue_url,
                     "number": issue_number,
-                    "action": "updated",
+                    "action": "solved" if solved else "updated",
                     "comment": comment_body
                 }
 
@@ -423,7 +426,19 @@ class Service:
             body=formatted["body"],
             labels=formatted.get("labels")
         )
-        if thread_id and result.get("number"):
+        issue_number = result.get("number")
+        if solved and issue_number:
+            try:
+                await self.upstream.update_issue(
+                    repo=target_repo,
+                    issue_number=issue_number,
+                    state="closed",
+                    state_reason="completed"
+                )
+            except Exception:
+                pass
+
+        if thread_id and issue_number:
             self.state.save_thread_issue(thread_id, target_repo, result["number"], result.get("url", ""))
 
         return {
@@ -433,7 +448,7 @@ class Service:
             "labels": result.get("labels") or formatted.get("labels", []),
             "url": result.get("url", ""),
             "number": result.get("number", 0),
-            "action": "created"
+            "action": "solved" if solved else "created"
         }
 
     async def get_release_announcement(self, tag=None):
