@@ -602,85 +602,167 @@ class Assistant:
             res["comment"] = build_update_comment(description, extra_messages, attachments, solved=solved, reopen=reopen)
         return res
 
-    async def format_release(self, tag_name, release_name, release_body):
+    async def format_release(self, tag_name, release_name, release_body, release_url=""):
+        target_url = release_url or (
+            f"https://github.com/catui-plataform/CATui/releases/tag/{tag_name}"
+            if tag_name
+            else "https://github.com/catui-plataform/CATui/releases"
+        )
         system = (
             "You are the release announcer assistant for CATui.\n"
             "Format the provided release notes into the exact Discord announcement template.\n"
             "RULES:\n"
-            "1. Base the announcement strictly on the provided release notes. DO NOT invent, hallucinate, or add features, bug fixes, or platforms not mentioned in the source text.\n"
-            "2. DO NOT use the placeholder content from the example below unless it is actually present in the source release notes.\n"
-            "3. The output MUST follow this exact structure:\n\n"
-            "```yaml\n"
-            "# CATUI | [BUILD NAME / VERSION IN UPPERCASE]\n\n"
-            "[Short 1-2 sentence introductory summary of what this update brings based strictly on the release notes]\n\n"
-            "# WHAT'S NEW\n"
-            "- [Feature/Category]: [Summary of change];\n"
-            "...\n\n"
-            "# RELEASE INFO\n"
-            "[Build platform, exclusivity, or testing status from the notes]\n"
-            "[Bug/feedback notice from the notes if present]\n"
-            "```\n"
-            "**Download:** https://catui.xyz/download/\n\n"
-            "4. In the WHAT'S NEW section:\n"
-            "   - Each bullet must start with '- Category: Description;'\n"
-            "   - End each bullet point with a semicolon (;).\n"
-            "5. Output ONLY the formatted markdown text starting with ```yaml and ending with the Download link. No surrounding conversational commentary."
+            "1. Base the announcement strictly on the provided release notes. DO NOT invent, hallucinate, or omit features, bug fixes, or platforms mentioned in the source text.\n"
+            "2. Preserve all authored descriptions and technical details in WHAT'S NEW. Do NOT summarize, cut, or compress items.\n"
+            "3. Strictly ZERO emojis anywhere in the text. Strip or omit all emojis.\n"
+            "4. Strictly omit all images (no <img ...> HTML tags, no ![alt](url) markdown images).\n"
+            "5. Structure:\n"
+            "   Inside ```yaml block:\n"
+            "   - Header: # CATUI | [BUILD NAME / VERSION IN UPPERCASE]\n"
+            "   - The introductory sentence from the release notes.\n"
+            "   - # WHAT'S NEW\n"
+            "     Each bullet point MUST be: '- Category: Full detailed description;'\n"
+            "     End each bullet point with a semicolon (;).\n"
+            "   - If other technical or status sections exist (e.g. RetroAchievements Status, Release Info), include them as uppercase headers (e.g. # RETROACHIEVEMENTS STATUS, # RELEASE INFO) with their full text.\n"
+            "   Close the ``` code block.\n"
+            "6. Outside the ``` code block:\n"
+            "   - If there are asset/project credits in the release notes, output:\n"
+            "     **Credits:**\n"
+            "     Followed by each credit URL on its own line directly below it (no names, categories, or bullet marks, just the bare URL on each line).\n"
+            "     Then a blank line.\n"
+            "   - **Website:** https://catui.xyz/\n"
+            "   - **Release:** " + target_url + "\n"
+            "7. Output ONLY the formatted markdown text starting with ```yaml. No conversational commentary."
         )
         payload_data = {
             "tag": tag_name,
             "name": release_name,
-            "body": (release_body or "")[:12000]
+            "body": (release_body or "")[:12000],
+            "release_url": target_url
         }
         try:
-            content = await self.request_raw(system, json.dumps(payload_data), 1400)
-            content = content.strip()
-            if "```yaml" in content and "https://catui.xyz/download/" in content:
+            content = await self.request_raw(system, json.dumps(payload_data), 1600)
+            content = strip_emojis(content.strip())
+            content = re.sub(r"<img[^>]*>", "", content, flags=re.IGNORECASE)
+            content = re.sub(r"!\[.*?\]\(.*?\)", "", content)
+            if "```yaml" in content and "https://catui.xyz/" in content:
                 start_idx = content.find("```yaml")
-                return content[start_idx:]
+                return content[start_idx:].strip()
         except Exception as exc:
             log.warning("DeepSeek release formatting failed, using fallback: %s", type(exc).__name__)
 
-        return self.fallback_release(tag_name, release_name, release_body)
+        return self.fallback_release(tag_name, release_name, release_body, release_url=target_url)
 
     @staticmethod
-    def fallback_release(tag_name, release_name, release_body):
+    def fallback_release(tag_name, release_name, release_body, release_url=""):
         raw_name = release_name or tag_name or "BUILD ZERO"
         title_upper = raw_name.strip().upper()
-        lines = [line.strip() for line in (release_body or "").splitlines() if line.strip()]
-        intro = "A new update for CATui is here, bringing visual improvements and bug fixes."
+        target_url = release_url or (
+            f"https://github.com/catui-plataform/CATui/releases/tag/{tag_name}"
+            if tag_name
+            else "https://github.com/catui-plataform/CATui/releases"
+        )
+
+        clean = strip_emojis(release_body or "")
+        clean = re.sub(r"<img[^>]*>", "", clean, flags=re.IGNORECASE)
+        clean = re.sub(r"!\[.*?\]\(.*?\)", "", clean)
+
+        lines = [line.strip() for line in clean.splitlines()]
+        intro = ""
         items = []
-        info_lines = []
+        other_sections = {}  # header -> [lines]
+        credit_urls = []
+        release_info_lines = []
+
+        current_header = None
+
         for line in lines:
-            if line.startswith(("#", "Website:", "Download:")):
+            if not line:
                 continue
-            cleaned = re.sub(r"^[•\-\*]\s*", "", line)
-            cleaned = re.sub(r"^\*\*(.*?)\*\*", r"\1", cleaned)
-            cleaned = re.sub(r"\*\*:", ":", cleaned)
-            if ":" in cleaned and not cleaned.lower().startswith("website"):
-                if not cleaned.endswith(";"):
-                    cleaned = cleaned.rstrip(".") + ";"
-                items.append(f"- {cleaned}")
-            elif any(k in cleaned.lower() for k in ("exclusive", "closed testing", "feedback", "bugs")):
-                info_lines.append(cleaned)
-            elif not items and len(line) < 180 and not intro.startswith(line):
+
+            # Check markdown heading
+            header_match = re.match(r"^#{1,6}\s*(.+)$", line)
+            if header_match:
+                hdr_raw = header_match.group(1).strip()
+                hdr_clean = re.sub(r"^\*+|\*+$", "", hdr_raw).strip().upper()
+                current_header = hdr_clean
+                if "CREDIT" not in current_header and "WHAT" not in current_header:
+                    if current_header not in other_sections:
+                        other_sections[current_header] = []
+                continue
+
+            # Filter out website / download links if they appear in text
+            if line.lower().startswith("website:") or line.lower().startswith("download:"):
+                continue
+
+            # Credit section extraction
+            if current_header and "CREDIT" in current_header:
+                if any(k in line.lower() for k in ("exclusive", "closed testing", "feedback", "bugs")):
+                    info_clean = line.replace("**", "").replace("*", "").strip()
+                    if info_clean not in release_info_lines:
+                        release_info_lines.append(info_clean)
+                else:
+                    found_urls = re.findall(r"https?://[^\s\)\>]+", line)
+                    for u in found_urls:
+                        u_clean = u.rstrip(".,;")
+                        if "catui.xyz" not in u_clean and u_clean not in credit_urls:
+                            credit_urls.append(u_clean)
+                continue
+
+            # Release info lines detection
+            if any(k in line.lower() for k in ("exclusive to windows", "closed testing", "feedback and bug reports", "feedback is welcome")):
+                info_clean = line.replace("**", "").replace("*", "").strip()
+                if info_clean not in release_info_lines:
+                    release_info_lines.append(info_clean)
+                continue
+
+            # What's new bullet points
+            cleaned_bullet = re.sub(r"^[•\-\*]\s*", "", line).strip()
+            if line.startswith(("•", "-", "*")) or (current_header and "WHAT" in current_header and ":" in line):
+                cleaned_bullet = re.sub(r"^\*\*(.*?)\*\*", r"\1", cleaned_bullet)
+                cleaned_bullet = re.sub(r"\*\*:", ":", cleaned_bullet).strip()
+                if not cleaned_bullet.endswith(";"):
+                    cleaned_bullet = cleaned_bullet.rstrip(".") + ";"
+                items.append(f"- {cleaned_bullet}")
+                continue
+
+            # If under another header (e.g. RETROACHIEVEMENTS STATUS)
+            if current_header and current_header in other_sections:
+                other_sections[current_header].append(line)
+                continue
+
+            # Pre-heading introductory text
+            if not current_header and not intro:
                 intro = line
 
+        if not intro:
+            intro = "A new update for CATui is here, bringing visual improvements and bug fixes."
         if not items:
             items = ["- General: Stability improvements, bug fixes and optimizations;"]
-        if not info_lines:
-            info_lines = [
+        if not release_info_lines:
+            release_info_lines = [
                 "Build ZERO is currently exclusive to Windows for closed testing.",
                 "Expect bugs and unfinished features. Feedback is welcome!"
             ]
 
-        return (
-            "```yaml\n"
-            f"# CATUI | {title_upper}\n\n"
-            f"{intro}\n\n"
-            "# WHAT'S NEW\n"
-            + "\n".join(items) + "\n\n"
-            "# RELEASE INFO\n"
-            + "\n".join(info_lines) + "\n"
-            "```\n"
-            "**Download:** https://catui.xyz/download/"
-        )
+        yaml_parts = [
+            f"# CATUI | {title_upper}\n",
+            f"{intro}\n",
+            "# WHAT'S NEW\n" + "\n".join(items)
+        ]
+
+        for sec_name, sec_lines in other_sections.items():
+            if sec_lines:
+                sec_text = "\n".join(sec_lines)
+                yaml_parts.append(f"\n# {sec_name}\n{sec_text}")
+
+        yaml_parts.append(f"\n# RELEASE INFO\n" + "\n".join(release_info_lines))
+
+        yaml_block = "```yaml\n" + "\n".join(yaml_parts) + "\n```"
+
+        footer_parts = []
+        if credit_urls:
+            footer_parts.append("**Credits:**\n" + "\n".join(credit_urls) + "\n")
+        footer_parts.append(f"**Website:** https://catui.xyz/\n**Release:** {target_url}")
+
+        return yaml_block + "\n" + "\n".join(footer_parts)

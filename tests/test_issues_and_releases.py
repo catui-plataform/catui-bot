@@ -155,7 +155,66 @@ Website: https://catui.xyz/"""
         self.assertIn("# RELEASE INFO", formatted)
         self.assertIn("Build ZERO is currently exclusive to Windows for closed testing.", formatted)
         self.assertIn("```", formatted)
-        self.assertIn("**Download:** https://catui.xyz/download/", formatted)
+        self.assertIn("**Website:** https://catui.xyz/", formatted)
+        self.assertIn("**Release:** https://github.com/catui-plataform/CATui/releases/tag/build-zero(0.1.1)", formatted)
+
+    def test_fallback_release_with_asset_credits_and_rich_sections(self):
+        body = """A new update for CATui Build ZERO is here, featuring a complete Settings redesign, visual improvements and bug fixes.
+
+### What's new
+
+• **Settings Redesign:** Completely rebuilt with a vertical layout, new icons, unique menu styles and improved navigation. Includes SVG controller and keyboard previews, country flags for languages, improved CATui Customs media artwork settings, and reorganized sections with updated names, such as Externals becoming Integrations.
+• **Reactive Topbar:** The Windows topbar now dynamically adapts to the interface colors.
+• **Library:** Fixed theme issues affecting List View.
+• **Game Display:** Replaced Small and Larger modes with Rounded, alongside Fit and Fill. Rounded now supports custom scaling through the in game Dock's Quick Menu.
+• **Controller Navigation:** Reduced controller input sensitivity when navigating the CATui interface.
+• **Icons:** Fixed saving inconsistencies and improved handling of conflicting icons and database entries.
+• **Loading:** Added a new loading animation based on the CATui logo.
+• **Dreamcast:** Improved ROM search filters and detection.
+• **General:** Various bug fixes, visual refinements and stability improvements.
+
+### RetroAchievements Status
+
+RetroAchievements support remains experimental and has not been officially validated in any CATui release yet. The integration uses game memory data to evaluate achievement conditions, but has not undergone official validation, so bugs and compatibility issues are still expected.
+
+### Asset Credits
+
+SVG controller and keyboard assets used in the Settings previews are sourced from these projects:
+
+• **Keyboard Assets:** https://github.com/RebeccaRGB/keyboards
+• **Gamepad Assets:** https://github.com/AL2009man/Gamepad-Asset-Pack
+
+**Build ZERO is currently exclusive to Windows for closed testing.** Some issues, including database conflicts, may still occur. Feedback and bug reports are always welcome!
+
+Website: https://catui.xyz/
+
+<img width="1258" height="742" alt="image" src="https://github.com/user-attachments/assets/6811c1dd-034f-41a9-947a-1b61240df986" />"""
+
+        formatted = Assistant.fallback_release(
+            "0.1.1",
+            "BUILD ZERO (0.1.1)",
+            body,
+            release_url="https://github.com/catui-plataform/CATui/releases/tag/v0.1.1"
+        )
+        self.assertIn("```yaml", formatted)
+        self.assertIn("# CATUI | BUILD ZERO (0.1.1)", formatted)
+        self.assertIn("# WHAT'S NEW", formatted)
+        self.assertIn("- Settings Redesign: Completely rebuilt with a vertical layout", formatted)
+        self.assertIn("# RETROACHIEVEMENTS STATUS", formatted)
+        self.assertIn("RetroAchievements support remains experimental", formatted)
+        self.assertIn("# RELEASE INFO", formatted)
+        self.assertIn("Build ZERO is currently exclusive to Windows for closed testing.", formatted)
+        self.assertIn("```", formatted)
+        # Check credits outside the block, one url per line
+        self.assertIn(
+            "**Credits:**\nhttps://github.com/RebeccaRGB/keyboards\nhttps://github.com/AL2009man/Gamepad-Asset-Pack",
+            formatted
+        )
+        self.assertIn("**Website:** https://catui.xyz/", formatted)
+        self.assertIn("**Release:** https://github.com/catui-plataform/CATui/releases/tag/v0.1.1", formatted)
+        # Verify no images or emojis
+        self.assertNotIn("<img", formatted)
+        self.assertNotIn("user-attachments", formatted)
 
 
 class IssueAndReleaseAsyncTests(unittest.IsolatedAsyncioTestCase):
@@ -332,11 +391,12 @@ A new update for CATui Build ZERO is here.
 # RELEASE INFO
 Closed testing on Windows.
 ```
-**Download:** https://catui.xyz/download/"""
+**Website:** https://catui.xyz/
+**Release:** https://github.com/catui-plataform/CATui/releases/tag/0.1.1"""
         self.http.json = AsyncMock(return_value={
             "choices": [{"message": {"content": expected_announcement}}]
         })
-        result = await self.assistant.format_release("0.1.1", "BUILD ZERO (0.1.1)", "raw body")
+        result = await self.assistant.format_release("0.1.1", "BUILD ZERO (0.1.1)", "raw body", release_url="https://github.com/catui-plataform/CATui/releases/tag/0.1.1")
         self.assertEqual(result, expected_announcement)
 
     async def test_upstream_create_issue_and_retry_on_422(self):
@@ -365,6 +425,22 @@ Closed testing on Windows.
         release = await self.upstream.catui_release()
         self.assertEqual(release["tag"], "build-zero(0.1.1)")
         self.assertEqual(release["body"], "Changelog content")
+
+    async def test_service_get_release_announcement(self):
+        self.http.json = AsyncMock(return_value={
+            "tag_name": "build-zero(0.1.1)",
+            "name": "build-zero (0.1.1)",
+            "body": "• **Feature:** Added new feature.",
+            "html_url": "https://github.com/catui-plataform/CATui/releases/tag/build-zero(0.1.1)",
+            "published_at": "2026-10-15T00:00:00Z"
+        })
+        res = await self.service.get_release_announcement()
+        self.assertEqual(res["tag"], "build-zero(0.1.1)")
+        self.assertIn("```yaml", res["announcement"])
+        self.assertIn("# CATUI | BUILD-ZERO (0.1.1)", res["announcement"])
+        self.assertIn("- Feature: Added new feature;", res["announcement"])
+        self.assertIn("**Website:** https://catui.xyz/", res["announcement"])
+        self.assertIn("**Release:** https://github.com/catui-plataform/CATui/releases/tag/build-zero(0.1.1)", res["announcement"])
 
     async def test_upstream_delete_issue_graphql_and_fallback(self):
         # 1. Successful GraphQL deletion

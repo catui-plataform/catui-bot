@@ -1183,16 +1183,31 @@ class Bot(discord.Client):
                     if not self.state.is_admin(btn_interaction.user.id, self.config.owner_id):
                         await self.discord_io.call(btn_interaction.response.send_message, "Access denied.", ephemeral=True)
                         return
-                    await self.discord_io.call(interaction.channel.send, content)
+                    if len(content) > 1950 and "```\n" in content:
+                        split_idx = content.rfind("```\n") + 3
+                        await self.discord_io.call(interaction.channel.send, content[:split_idx])
+                        await self.discord_io.call(interaction.channel.send, content[split_idx:].strip())
+                    else:
+                        await self.discord_io.call(interaction.channel.send, content)
                     publish_btn.disabled = True
                     publish_btn.label = "Published"
                     await self.discord_io.call(btn_interaction.response.edit_message, view=view)
 
                 publish_btn.callback = publish_callback
                 view.add_item(publish_btn)
-                await self.discord_io.call(interaction.followup.send, content, view=view, ephemeral=True)
+                if len(content) > 1950 and "```\n" in content:
+                    split_idx = content.rfind("```\n") + 3
+                    await self.discord_io.call(interaction.followup.send, content[:split_idx], ephemeral=True)
+                    await self.discord_io.call(interaction.followup.send, content[split_idx:].strip(), view=view, ephemeral=True)
+                else:
+                    await self.discord_io.call(interaction.followup.send, content, view=view, ephemeral=True)
             else:
-                await self.discord_io.call(interaction.followup.send, content, ephemeral=False)
+                if len(content) > 1950 and "```\n" in content:
+                    split_idx = content.rfind("```\n") + 3
+                    await self.discord_io.call(interaction.followup.send, content[:split_idx], ephemeral=False)
+                    await self.discord_io.call(interaction.followup.send, content[split_idx:].strip(), ephemeral=False)
+                else:
+                    await self.discord_io.call(interaction.followup.send, content, ephemeral=False)
 
         await self.discord_io.call(self.tree.sync, guild=guild)
         for job in self.state.jobs("pending"):

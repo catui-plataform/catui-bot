@@ -487,7 +487,8 @@ class Service:
         announcement = await self.assistant.format_release(
             tag_name=release["tag"],
             release_name=release["name"],
-            release_body=release["body"]
+            release_body=release["body"],
+            release_url=release.get("url") or f"https://github.com/catui-plataform/CATui/releases/tag/{release['tag']}"
         )
         return {
             "announcement": announcement,
