@@ -1124,7 +1124,7 @@ class Bot(discord.Client):
                 embed.add_field(name=field_title, value=note_text[:1000], inline=False)
 
             view = SafeView(timeout=180)
-            view.add_item(discord.ui.Button(label="View Issue (Admin Only)", url=created["url"]))
+            view.add_item(discord.ui.Button(label="View Issue", url=created["url"]))
             await self.discord_io.call(interaction.followup.send, embed=embed, view=view)
 
             if is_action_solved and is_thread:
