@@ -303,6 +303,7 @@ class IssueAndReleaseAsyncTests(unittest.IsolatedAsyncioTestCase):
         # Verify lecturing sentences are stripped
         self.assertNotIn("The reporter did not include", result["body"])
         self.assertNotIn("Further information", result["body"])
+        self.assertIn("*Issue reported from Discord by #arthie*", result["body"])
         self.assertIn("## Summary\nCATui is crashing.", result["body"])
 
         # Verify maintainer note section
@@ -345,12 +346,12 @@ Closed testing on Windows.
             call_count += 1
             if call_count == 1:
                 raise RemoteError("Unprocessable Entity", status=422)
-            return {"html_url": "https://github.com/arthiee4/catui-main/issues/42", "number": 42, "labels": []}
+            return {"html_url": "https://github.com/catui-plataform/CATui/issues/42", "number": 42, "labels": []}
 
         self.http.json = AsyncMock(side_effect=mock_json)
-        issue = await self.upstream.create_issue("arthiee4/catui-main", "Test Issue", "Body text", labels=["custom-label"])
+        issue = await self.upstream.create_issue("catui-plataform/CATui", "Test Issue", "Body text", labels=["custom-label"])
         self.assertEqual(issue["number"], 42)
-        self.assertEqual(issue["url"], "https://github.com/arthiee4/catui-main/issues/42")
+        self.assertEqual(issue["url"], "https://github.com/catui-plataform/CATui/issues/42")
         self.assertEqual(call_count, 2)
 
     async def test_upstream_catui_release(self):
@@ -373,7 +374,7 @@ Closed testing on Windows.
             return {"node_id": "I_kwDO123456", "number": 77}
 
         self.http.json = AsyncMock(side_effect=mock_json_success)
-        res1 = await self.upstream.delete_issue("arthiee4/catui-main", 77)
+        res1 = await self.upstream.delete_issue("catui-plataform/CATui", 77)
         self.assertTrue(res1["deleted"])
         self.assertEqual(res1["method"], "graphql")
 
@@ -386,24 +387,24 @@ Closed testing on Windows.
             return {"node_id": "I_kwDO789", "number": 78}
 
         self.http.json = AsyncMock(side_effect=mock_json_err)
-        res2 = await self.upstream.delete_issue("arthiee4/catui-main", 78)
+        res2 = await self.upstream.delete_issue("catui-plataform/CATui", 78)
         self.assertTrue(res2["deleted"])
         self.assertEqual(res2["method"], "closed_not_planned")
 
         # 3. Graceful handling if issue is already 404
         self.http.json = AsyncMock(side_effect=RemoteError("Not Found", status=404))
-        res3 = await self.upstream.delete_issue("arthiee4/catui-main", 79)
+        res3 = await self.upstream.delete_issue("catui-plataform/CATui", 79)
         self.assertTrue(res3["deleted"])
         self.assertEqual(res3["method"], "already_deleted")
 
     async def test_service_delete_github_issue(self):
         self.upstream.delete_issue = AsyncMock(return_value={"deleted": True, "method": "graphql"})
-        self.state.save_thread_issue(888999, "arthiee4/catui-main", 42, "https://github.com/arthiee4/catui-main/issues/42")
+        self.state.save_thread_issue(888999, "catui-plataform/CATui", 42, "https://github.com/catui-plataform/CATui/issues/42")
 
         res = await self.service.delete_github_issue(thread_id=888999)
         self.assertTrue(res["deleted"])
         self.assertEqual(res["number"], 42)
-        self.upstream.delete_issue.assert_awaited_once_with("arthiee4/catui-main", 42)
+        self.upstream.delete_issue.assert_awaited_once_with("catui-plataform/CATui", 42)
         # Verify thread mapping is deleted from state
         self.assertIsNone(self.state.get_thread_issue(888999))
 
@@ -414,7 +415,7 @@ Closed testing on Windows.
             "labels": ["bug", "ui"]
         })
         self.upstream.create_issue = AsyncMock(return_value={
-            "url": "https://github.com/arthiee4/catui-main/issues/99",
+            "url": "https://github.com/catui-plataform/CATui/issues/99",
             "number": 99,
             "labels": ["bug", "ui"]
         })
@@ -423,7 +424,7 @@ Closed testing on Windows.
             starter={"author": "User123", "content": "Raw starter text", "is_admin": False, "images": [], "files": []}
         )
         self.assertEqual(res["number"], 99)
-        self.assertEqual(res["repo"], "arthiee4/catui-main")
+        self.assertEqual(res["repo"], "catui-plataform/CATui")
         self.assertEqual(res["labels"], ["bug", "ui"])
 
     async def test_service_sync_github_issue_updates_existing_and_force_new(self):
@@ -433,12 +434,12 @@ Closed testing on Windows.
             "labels": ["bug"]
         })
         self.upstream.create_issue = AsyncMock(return_value={
-            "url": "https://github.com/arthiee4/catui-main/issues/101",
+            "url": "https://github.com/catui-plataform/CATui/issues/101",
             "number": 101,
             "labels": ["bug"]
         })
         self.upstream.update_issue = AsyncMock(return_value={
-            "url": "https://github.com/arthiee4/catui-main/issues/101",
+            "url": "https://github.com/catui-plataform/CATui/issues/101",
             "number": 101,
             "labels": ["bug", "ui"]
         })
@@ -474,7 +475,7 @@ Closed testing on Windows.
         # 3. Running with new=True (or force_new=True) creates a brand new issue
         self.upstream.create_issue.reset_mock()
         self.upstream.create_issue.return_value = {
-            "url": "https://github.com/arthiee4/catui-main/issues/102",
+            "url": "https://github.com/catui-plataform/CATui/issues/102",
             "number": 102,
             "labels": ["bug"]
         }
@@ -492,7 +493,7 @@ Closed testing on Windows.
         self.upstream.update_issue.side_effect = RemoteError("Gone", status=410)
         self.upstream.create_issue.reset_mock()
         self.upstream.create_issue.return_value = {
-            "url": "https://github.com/arthiee4/catui-main/issues/103",
+            "url": "https://github.com/catui-plataform/CATui/issues/103",
             "number": 103,
             "labels": ["bug"]
         }
@@ -511,7 +512,7 @@ Closed testing on Windows.
         self.upstream.update_issue.reset_mock()
         self.upstream.update_issue.side_effect = None
         self.upstream.update_issue.return_value = {
-            "url": "https://github.com/arthiee4/catui-main/issues/103",
+            "url": "https://github.com/catui-plataform/CATui/issues/103",
             "number": 103,
             "labels": ["bug", "ui"]
         }
@@ -525,7 +526,7 @@ Closed testing on Windows.
         )
         self.assertEqual(solved_res["action"], "solved")
         self.upstream.update_issue.assert_awaited_once_with(
-            repo="arthiee4/catui-main",
+            repo="catui-plataform/CATui",
             issue_number=103,
             title="Updated Title",
             body="Updated Body with Extra Notes",
@@ -563,7 +564,7 @@ Closed testing on Windows.
         # 7. Running with reopen=True reopens the issue on GitHub
         self.upstream.update_issue.reset_mock()
         self.upstream.update_issue.return_value = {
-            "url": "https://github.com/arthiee4/catui-main/issues/103",
+            "url": "https://github.com/catui-plataform/CATui/issues/103",
             "number": 103,
             "labels": ["bug", "ui"]
         }
@@ -576,7 +577,7 @@ Closed testing on Windows.
         )
         self.assertEqual(reopened_res["action"], "reopened")
         self.upstream.update_issue.assert_awaited_once_with(
-            repo="arthiee4/catui-main",
+            repo="catui-plataform/CATui",
             issue_number=103,
             title="Bug Report",
             body="Body",
@@ -703,11 +704,11 @@ Closed testing on Windows.
             )
 
             bot.service.create_github_issue = AsyncMock(return_value={
-                "repo": "arthiee4/catui-main",
+                "repo": "catui-plataform/CATui",
                 "title": "Crash in PCSX2",
                 "body": "Fixed",
                 "labels": ["core"],
-                "url": "https://github.com/arthiee4/catui-main/issues/999",
+                "url": "https://github.com/catui-plataform/CATui/issues/999",
                 "number": 999,
                 "action": "solved"
             })
@@ -734,11 +735,11 @@ Closed testing on Windows.
             # 2. Running with solved=False reopens the issue, removes solved tag, unlocks and unarchives thread
             bot.service.create_github_issue.reset_mock()
             bot.service.create_github_issue.return_value = {
-                "repo": "arthiee4/catui-main",
+                "repo": "catui-plataform/CATui",
                 "title": "Crash in PCSX2",
                 "body": "Reopened",
                 "labels": ["core"],
-                "url": "https://github.com/arthiee4/catui-main/issues/999",
+                "url": "https://github.com/catui-plataform/CATui/issues/999",
                 "number": 999,
                 "action": "reopened"
             }
@@ -755,7 +756,7 @@ Closed testing on Windows.
             await cmd.callback(interaction, message="cleanup", new=False, solved=None, delete=True)
             bot.service.delete_github_issue.assert_awaited_once_with(
                 thread_id=555666777,
-                repo="arthiee4/catui-main",
+                repo="catui-plataform/CATui",
                 issue_number=None
             )
             target.delete.assert_awaited_once()
@@ -843,7 +844,7 @@ Closed testing on Windows.
             embeds=[
                 SimpleNamespace(
                     title="GitHub Issue #88 (Updated)",
-                    url="https://github.com/arthiee4/catui-main/issues/88",
+                    url="https://github.com/catui-plataform/CATui/issues/88",
                     description="Issue details"
                 )
             ],
@@ -851,31 +852,31 @@ Closed testing on Windows.
             content=""
         )
         thread1 = SimpleNamespace(history=lambda limit=50: MockHistory([msg_embed]))
-        found1 = await find_existing_issue_in_thread(thread1, "arthiee4/catui-main")
+        found1 = await find_existing_issue_in_thread(thread1, "catui-plataform/CATui")
         self.assertIsNotNone(found1)
         self.assertEqual(found1["issue_number"], 88)
-        self.assertEqual(found1["repo"], "arthiee4/catui-main")
+        self.assertEqual(found1["repo"], "catui-plataform/CATui")
 
         # 2. Thread with component button URL
-        btn = SimpleNamespace(url="https://github.com/arthiee4/catui-main/issues/99")
+        btn = SimpleNamespace(url="https://github.com/catui-plataform/CATui/issues/99")
         comp = SimpleNamespace(children=[btn])
         msg_comp = SimpleNamespace(embeds=[], components=[comp], content="")
         thread2 = SimpleNamespace(history=lambda limit=50: MockHistory([msg_comp]))
-        found2 = await find_existing_issue_in_thread(thread2, "arthiee4/catui-main")
+        found2 = await find_existing_issue_in_thread(thread2, "catui-plataform/CATui")
         self.assertIsNotNone(found2)
         self.assertEqual(found2["issue_number"], 99)
 
         # 3. Thread with message content link
-        msg_content = SimpleNamespace(embeds=[], components=[], content="Tracked at https://github.com/arthiee4/catui-main/issues/105")
+        msg_content = SimpleNamespace(embeds=[], components=[], content="Tracked at https://github.com/catui-plataform/CATui/issues/105")
         thread3 = SimpleNamespace(history=lambda limit=50: MockHistory([msg_content]))
-        found3 = await find_existing_issue_in_thread(thread3, "arthiee4/catui-main")
+        found3 = await find_existing_issue_in_thread(thread3, "catui-plataform/CATui")
         self.assertIsNotNone(found3)
         self.assertEqual(found3["issue_number"], 105)
 
         # 4. Thread with no links returns None
         msg_empty = SimpleNamespace(embeds=[], components=[], content="Just random chat")
         thread4 = SimpleNamespace(history=lambda limit=50: MockHistory([msg_empty]))
-        found4 = await find_existing_issue_in_thread(thread4, "arthiee4/catui-main")
+        found4 = await find_existing_issue_in_thread(thread4, "catui-plataform/CATui")
         self.assertIsNone(found4)
 
 

@@ -9,7 +9,7 @@ CORE_IDS = ("pcsx2", "eden", "rpcs3", "shadps4", "ppsspp", "cemu", "flycast")
 CORE_NAMES = {"pcsx2": "PCSX2", "eden": "Eden", "rpcs3": "RPCS3", "shadps4": "shadPS4",
               "ppsspp": "PPSSPP", "cemu": "Cemu", "flycast": "Flycast"}
 DEFAULT_ISSUES_CHANNEL_ID = 1460650067139756165
-DEFAULT_ISSUES_REPO = "arthiee4/catui-main"
+DEFAULT_ISSUES_REPO = "catui-plataform/CATui"
 DEEPSEEK_MODEL = "deepseek-flash"
 
 

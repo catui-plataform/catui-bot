@@ -827,7 +827,7 @@ class Bot(discord.Client):
             )
             await self.discord_io.call(interaction.response.send_message, embed=embed, ephemeral=True)
 
-        @self.tree.command(name="issue", description="Create, update, or delete a GitHub issue in arthiee4/catui-main from this gallery post", guild=guild)
+        @self.tree.command(name="issue", description="Create, update, or delete a GitHub issue in catui-plataform/CATui from this gallery post", guild=guild)
         @app_commands.describe(
             message="Optional text note, message IDs, or links (space-separated, e.g. 'another test 1562184884800192664')",
             new="Set to True to create a new issue instead of updating the existing one",

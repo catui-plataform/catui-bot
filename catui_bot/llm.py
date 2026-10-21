@@ -183,7 +183,16 @@ def clean_summary_text(text):
 
 
 def build_issue_body(summary=None, details=None, extra_messages=None, attachments=None, description=None, starter=None, reporter=None):
-    body_parts = []
+    author_clean = None
+    if isinstance(starter, dict) and starter.get("author"):
+        author_clean = strip_emojis(starter['author']).lstrip("@#").strip() or "User"
+    elif reporter:
+        author_clean = strip_emojis(reporter).lstrip("@#").strip() or "User"
+
+    if author_clean:
+        body_parts = [f"*Issue reported from Discord by #{author_clean}*", ""]
+    else:
+        body_parts = ["*Issue reported from Discord*", ""]
 
     clean_sum = clean_summary_text(summary)
     if not clean_sum:
@@ -272,17 +281,6 @@ def build_issue_body(summary=None, details=None, extra_messages=None, attachment
 
     if maintainer_section:
         body_parts.extend(["", "## Maintainer Notes", *maintainer_section])
-
-    context_lines = []
-    if isinstance(starter, dict) and starter.get("author"):
-        role = "Admin" if starter.get("is_admin") else "User"
-        author_clean = strip_emojis(starter['author']).lstrip("@#").strip() or "User"
-        context_lines.append(f"- Reported by: #{author_clean} ({role})")
-    elif reporter:
-        author_clean = strip_emojis(reporter).lstrip("@#").strip() or "User"
-        context_lines.append(f"- Reported by: #{author_clean}")
-    if context_lines:
-        body_parts.extend(["", "## Context", *context_lines])
 
     return "\n".join(body_parts)
 
