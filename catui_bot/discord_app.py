@@ -148,7 +148,7 @@ def split_release_announcement(content, limit=1900):
 
 async def send_release_announcement(channel, discord_io, content):
     if len(content) <= 1950:
-        await discord_io.call(channel.send, content)
+        await discord_io.call(channel.send, content, suppress_embeds=True)
         return
     if len(content) <= 4096:
         embed = discord.Embed(description=content, color=0x5865F2)
@@ -1247,10 +1247,10 @@ class Bot(discord.Client):
                         return
                     if len(content) > 1950 and "```\n" in content:
                         split_idx = content.rfind("```\n") + 3
-                        await self.discord_io.call(interaction.channel.send, content[:split_idx])
-                        await self.discord_io.call(interaction.channel.send, content[split_idx:].strip())
+                        await self.discord_io.call(interaction.channel.send, content[:split_idx], suppress_embeds=True)
+                        await self.discord_io.call(interaction.channel.send, content[split_idx:].strip(), suppress_embeds=True)
                     else:
-                        await self.discord_io.call(interaction.channel.send, content)
+                        await self.discord_io.call(interaction.channel.send, content, suppress_embeds=True)
                     publish_btn.disabled = True
                     publish_btn.label = "Published"
                     await self.discord_io.call(btn_interaction.response.edit_message, view=view)
@@ -1259,17 +1259,17 @@ class Bot(discord.Client):
                 view.add_item(publish_btn)
                 if len(content) > 1950 and "```\n" in content:
                     split_idx = content.rfind("```\n") + 3
-                    await self.discord_io.call(interaction.followup.send, content[:split_idx], ephemeral=True)
-                    await self.discord_io.call(interaction.followup.send, content[split_idx:].strip(), view=view, ephemeral=True)
+                    await self.discord_io.call(interaction.followup.send, content[:split_idx], ephemeral=True, suppress_embeds=True)
+                    await self.discord_io.call(interaction.followup.send, content[split_idx:].strip(), view=view, ephemeral=True, suppress_embeds=True)
                 else:
-                    await self.discord_io.call(interaction.followup.send, content, view=view, ephemeral=True)
+                    await self.discord_io.call(interaction.followup.send, content, view=view, ephemeral=True, suppress_embeds=True)
             else:
                 if len(content) > 1950 and "```\n" in content:
                     split_idx = content.rfind("```\n") + 3
-                    await self.discord_io.call(interaction.followup.send, content[:split_idx], ephemeral=False)
-                    await self.discord_io.call(interaction.followup.send, content[split_idx:].strip(), ephemeral=False)
+                    await self.discord_io.call(interaction.followup.send, content[:split_idx], ephemeral=False, suppress_embeds=True)
+                    await self.discord_io.call(interaction.followup.send, content[split_idx:].strip(), ephemeral=False, suppress_embeds=True)
                 else:
-                    await self.discord_io.call(interaction.followup.send, content, ephemeral=False)
+                    await self.discord_io.call(interaction.followup.send, content, ephemeral=False, suppress_embeds=True)
 
         await self.discord_io.call(self.tree.sync, guild=guild)
         for job in self.state.jobs("pending"):
