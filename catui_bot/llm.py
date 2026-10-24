@@ -40,6 +40,63 @@ def strip_emojis(text):
     return EMOJI_PATTERN.sub("", str(text)).strip()
 
 
+def normalize_release_announcement(content):
+    """Keep release links clickable and space top-level What's New entries."""
+    content = strip_emojis(content)
+    opening = content.find("```yaml")
+    if opening < 0:
+        return content
+    body_start = opening + len("```yaml")
+    if content[body_start:body_start + 1] == "\n":
+        body_start += 1
+    closing = content.find("```", body_start)
+    if closing < 0:
+        return content
+
+    yaml_body = content[body_start:closing]
+    external_urls = []
+
+    def remember_url(url):
+        cleaned = url.rstrip(".,;:")
+        if cleaned and cleaned not in external_urls:
+            external_urls.append(cleaned)
+        return cleaned
+
+    def unwrap_markdown_link(match):
+        remember_url(match.group(2))
+        return match.group(1)
+
+    yaml_body = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", unwrap_markdown_link, yaml_body)
+
+    def remove_plain_url(match):
+        raw = match.group(0)
+        cleaned = remember_url(raw)
+        return raw[len(cleaned):]
+
+    yaml_body = re.sub(r"https?://[^\s<>]+", remove_plain_url, yaml_body)
+    yaml_lines = [re.sub(r"[ \t]{2,}", " ", line).rstrip() for line in yaml_body.splitlines()]
+    spaced_lines = []
+    in_whats_new = False
+    previous_nonempty = ""
+    for line in yaml_lines:
+        heading = re.match(r"^\s*#\s*(.+)$", line)
+        if heading:
+            in_whats_new = heading.group(1).strip().upper() == "WHAT'S NEW"
+        if (in_whats_new and line.startswith("- ") and previous_nonempty.startswith("-")
+                and spaced_lines and spaced_lines[-1].strip()):
+            spaced_lines.append("")
+        spaced_lines.append(line)
+        if line.strip():
+            previous_nonempty = line.strip()
+
+    yaml_text = "```yaml\n" + "\n".join(spaced_lines).strip() + "\n```"
+    footer = content[closing + 3:].strip()
+    if external_urls:
+        links = "**Links:**\n" + "\n".join(external_urls)
+        footer = links + ("\n\n" + footer if footer else "")
+    return yaml_text + ("\n" + footer if footer else "")
+
+
 CANONICAL_LABELS = ("catui", "core", "cores", "seamless", "compat", "bug", "enhancement")
 
 LABEL_MAPPINGS = {
@@ -614,6 +671,7 @@ class Assistant:
             "RULES:\n"
             "1. Base the announcement strictly on the provided release notes. DO NOT invent, hallucinate, or omit features, bug fixes, or platforms mentioned in the source text.\n"
             "2. Preserve all authored descriptions and technical details in WHAT'S NEW. Do NOT summarize, cut, or compress items.\n"
+            "   Treat the release body as the only source of truth. Never infer, fill gaps, add generic claims, or create missing sections/items. Include a section only when its content exists in the source.\n"
             "3. Strictly ZERO emojis anywhere in the text. Strip or omit all emojis.\n"
             "4. Strictly omit all images (no <img ...> HTML tags, no ![alt](url) markdown images).\n"
             "5. Structure:\n"
@@ -621,11 +679,13 @@ class Assistant:
             "   - Header: # CATUI | [BUILD NAME / VERSION IN UPPERCASE]\n"
             "   - The introductory sentence from the release notes.\n"
             "   - # WHAT'S NEW\n"
-            "     Each bullet point MUST be: '- Category: Full detailed description;'\n"
+            "     Include this section only when the source contains changes. Each bullet point MUST be: '- Category: Full detailed description;'\n"
             "     End each bullet point with a semicolon (;).\n"
+            "     Leave one blank line between each bullet point.\n"
             "   - If other technical or status sections exist (e.g. RetroAchievements Status, Release Info), include them as uppercase headers (e.g. # RETROACHIEVEMENTS STATUS, # RELEASE INFO) with their full text.\n"
             "   Close the ``` code block.\n"
             "6. Outside the ``` code block:\n"
+            "   - No URL may appear inside the YAML block. Put every URL found in the release notes outside the block as a bare clickable URL under **Links:**, one per line.\n"
             "   - If there are asset/project credits in the release notes, output:\n"
             "     **Credits:**\n"
             "     Followed by each credit URL on its own line directly below it (no names, categories, or bullet marks, just the bare URL on each line).\n"
@@ -647,11 +707,13 @@ class Assistant:
             content = re.sub(r"!\[.*?\]\(.*?\)", "", content)
             if "```yaml" in content and "https://catui.xyz/" in content:
                 start_idx = content.find("```yaml")
-                return content[start_idx:].strip()
+                return normalize_release_announcement(content[start_idx:].strip())
         except Exception as exc:
             log.warning("DeepSeek release formatting failed, using fallback: %s", type(exc).__name__)
 
-        return self.fallback_release(tag_name, release_name, release_body, release_url=target_url)
+        return normalize_release_announcement(
+            self.fallback_release(tag_name, release_name, release_body, release_url=target_url)
+        )
 
     @staticmethod
     def fallback_release(tag_name, release_name, release_body, release_url=""):
@@ -668,10 +730,12 @@ class Assistant:
         clean = re.sub(r"!\[.*?\]\(.*?\)", "", clean)
 
         lines = [line.strip() for line in clean.splitlines()]
+        intro_lines = []
         intro = ""
         items = []
         other_sections = {}  # header -> [lines]
         credit_urls = []
+        release_urls = []
         release_info_lines = []
 
         current_header = None
@@ -691,8 +755,12 @@ class Assistant:
                         other_sections[current_header] = []
                 continue
 
-            # Filter out website / download links if they appear in text
+            # Keep authored website/download links outside the YAML block.
             if line.lower().startswith("website:") or line.lower().startswith("download:"):
+                for url in re.findall(r"https?://[^\s\)\>]+", line):
+                    cleaned_url = url.rstrip(".,;")
+                    if cleaned_url and cleaned_url not in release_urls:
+                        release_urls.append(cleaned_url)
                 continue
 
             # Credit section extraction
@@ -716,6 +784,11 @@ class Assistant:
                     release_info_lines.append(info_clean)
                 continue
 
+            # Preserve text in explicit sections as authored.
+            if current_header and current_header in other_sections:
+                other_sections[current_header].append(line)
+                continue
+
             # What's new bullet points
             cleaned_bullet = re.sub(r"^[•\-\*]\s*", "", line).strip()
             if line.startswith(("•", "-", "*")) or (current_header and "WHAT" in current_header and ":" in line):
@@ -726,43 +799,33 @@ class Assistant:
                 items.append(f"- {cleaned_bullet}")
                 continue
 
-            # If under another header (e.g. RETROACHIEVEMENTS STATUS)
-            if current_header and current_header in other_sections:
-                other_sections[current_header].append(line)
-                continue
-
             # Pre-heading introductory text
-            if not current_header and not intro:
-                intro = line
+            if not current_header:
+                intro_lines.append(line)
 
-        if not intro:
-            intro = "A new update for CATui is here, bringing visual improvements and bug fixes."
-        if not items:
-            items = ["- General: Stability improvements, bug fixes and optimizations;"]
-        if not release_info_lines:
-            release_info_lines = [
-                "Build ZERO is currently exclusive to Windows for closed testing.",
-                "Expect bugs and unfinished features. Feedback is welcome!"
-            ]
+        intro = "\n".join(intro_lines).strip()
 
-        yaml_parts = [
-            f"# CATUI | {title_upper}\n",
-            f"{intro}\n",
-            "# WHAT'S NEW\n" + "\n".join(items)
-        ]
+        yaml_parts = [f"# CATUI | {title_upper}"]
+        if intro:
+            yaml_parts.append(intro)
+        if items:
+            yaml_parts.append("# WHAT'S NEW\n" + "\n\n".join(items))
 
         for sec_name, sec_lines in other_sections.items():
             if sec_lines:
                 sec_text = "\n".join(sec_lines)
-                yaml_parts.append(f"\n# {sec_name}\n{sec_text}")
+                yaml_parts.append(f"# {sec_name}\n{sec_text}")
 
-        yaml_parts.append(f"\n# RELEASE INFO\n" + "\n".join(release_info_lines))
+        if release_info_lines:
+            yaml_parts.append("# RELEASE INFO\n" + "\n".join(release_info_lines))
 
-        yaml_block = "```yaml\n" + "\n".join(yaml_parts) + "\n```"
+        yaml_block = "```yaml\n" + "\n\n".join(yaml_parts) + "\n```"
 
         footer_parts = []
         if credit_urls:
             footer_parts.append("**Credits:**\n" + "\n".join(credit_urls) + "\n")
+        if release_urls:
+            footer_parts.append("**Links:**\n" + "\n".join(release_urls))
         footer_parts.append(f"**Website:** https://catui.xyz/\n**Release:** {target_url}")
 
         return yaml_block + "\n" + "\n".join(footer_parts)

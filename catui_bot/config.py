@@ -9,6 +9,7 @@ CORE_IDS = ("pcsx2", "eden", "rpcs3", "shadps4", "ppsspp", "cemu", "flycast")
 CORE_NAMES = {"pcsx2": "PCSX2", "eden": "Eden", "rpcs3": "RPCS3", "shadps4": "shadPS4",
               "ppsspp": "PPSSPP", "cemu": "Cemu", "flycast": "Flycast"}
 DEFAULT_ISSUES_CHANNEL_ID = 1460650067139756165
+DEFAULT_RELEASE_CHANNEL_ID = 1461812248614928445
 DEFAULT_ISSUES_REPO = "catui-plataform/CATui"
 DEEPSEEK_MODEL = "deepseek-flash"
 
@@ -28,6 +29,7 @@ class Config:
     updates_enabled: bool
     issues_channel_id: int = DEFAULT_ISSUES_CHANNEL_ID
     issues_repo: str = DEFAULT_ISSUES_REPO
+    release_channel_id: int = DEFAULT_RELEASE_CHANNEL_ID
 
     @classmethod
     def load(cls):
@@ -49,6 +51,8 @@ class Config:
         issues_channel_raw = os.environ.get("ISSUES_CHANNEL_ID", "").strip()
         issues_channel_id = int(issues_channel_raw) if issues_channel_raw.isdigit() else DEFAULT_ISSUES_CHANNEL_ID
         issues_repo = os.environ.get("ISSUES_REPO", "").strip() or DEFAULT_ISSUES_REPO
+        release_channel_raw = os.environ.get("RELEASE_CHANNEL_ID", "").strip()
+        release_channel_id = int(release_channel_raw) if release_channel_raw.isdigit() else DEFAULT_RELEASE_CHANNEL_ID
         return cls(required("DISCORD_TOKEN"), snowflake("DISCORD_OWNER_ID"),
                    snowflake("DISCORD_GUILD_ID"), snowflake("DISCORD_CHANNEL_ID"),
                    required("GITHUB_TOKEN"), key, os.environ.get("DEEPSEEK_API_KEY", "").strip(),
@@ -57,4 +61,5 @@ class Config:
                    Path(os.environ.get("STATE_PATH", "data/bot.sqlite3")),
                    os.environ.get("CORE_UPDATES_ENABLED", "true").lower() == "true",
                    issues_channel_id,
-                   issues_repo)
+                   issues_repo,
+                   release_channel_id)

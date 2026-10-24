@@ -23,6 +23,9 @@ class State:
             stage TEXT NOT NULL DEFAULT '', reported_stage TEXT NOT NULL DEFAULT '',
             stage_pct INTEGER NOT NULL DEFAULT 0);
           CREATE TABLE IF NOT EXISTS release_summaries(core TEXT PRIMARY KEY, revision TEXT NOT NULL, data TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS release_announcements(
+            repository TEXT PRIMARY KEY, release_id INTEGER NOT NULL,
+            published_at TEXT NOT NULL, tag TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS admins(user_id INTEGER PRIMARY KEY, added_at INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS thread_issues(
             thread_id INTEGER PRIMARY KEY,
@@ -147,6 +150,20 @@ class State:
     def cache_release(self, core, revision, data):
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO release_summaries VALUES (?,?,?)", (core, revision, json.dumps(data)))
+
+    def release_announcement_cursor(self, repository):
+        row = self.db.execute(
+            "SELECT release_id, published_at, tag FROM release_announcements WHERE repository=?",
+            (repository,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def save_release_announcement_cursor(self, repository, release_id, published_at, tag):
+        with self.db:
+            self.db.execute(
+                "INSERT OR REPLACE INTO release_announcements(repository, release_id, published_at, tag) VALUES (?,?,?,?)",
+                (repository, int(release_id), str(published_at), str(tag))
+            )
 
     def expire(self):
         for job in self.jobs("pending"):

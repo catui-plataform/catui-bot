@@ -38,6 +38,7 @@ Configure these variables:
 | `DISCORD_OWNER_ID` | Your Discord user ID (numeric snowflake) |
 | `DISCORD_GUILD_ID` | Your Discord server (guild) ID |
 | `DISCORD_CHANNEL_ID` | Your private text channel ID |
+| `RELEASE_CHANNEL_ID` | CATui release announcement channel ID; defaults to `1461812248614928445` |
 | `GITHUB_TOKEN` | Fine-grained PAT scoped to `catui-bot` and `CATui`, Actions: Read and write, Contents: Read and write, Metadata: Read |
 | `APPROVAL_SIGNING_KEY` | Random string with at least 32 characters; must match the Actions secret |
 | `DEEPSEEK_API_KEY` | Key from your DeepSeek account; optional if starting without chat |
@@ -51,6 +52,8 @@ and the GitHub Actions secret. Never commit keys or paste them into chat or logs
 Release summaries use your DeepSeek API key and are cached per release description. Source repairs use small exact replacements. GitHub Actions keeps edits and incremental builds in the same runner, with separate integration/compiler and runtime-repair budgets (12 each by default, configurable with `AI_REPAIR_MAX_ATTEMPTS`, maximum 50). Python tooling exceptions receive up to four repairs (`PYTHON_REPAIR_MAX_ATTEMPTS`, maximum 10). The workflow deadline remains 240 minutes; native and CATui validation are mandatory. Failed runs preserve the staged binary, source recovery patch and actual validator logs in the diagnostic artifact.
 
 After a code deployment, Square resumes a failed update only if its existing owner approval is still valid, the store revision is unchanged and the failed run used an older runner revision. It resubmits that exact approved plan once; completed runs from the previous dispatch are ignored while GitHub registers the new one. Cancelled updates are not resumed. The bot does not repeatedly redispatch failures against identical runner code.
+
+The release watcher checks `catui-plataform/CATui` every five minutes. It uses the release description published on GitHub as its source, skips drafts and prereleases, and posts each new published release once. On first startup with a new state database, the current latest release becomes the baseline and is not reposted. The announcement channel must be a text channel in `DISCORD_GUILD_ID` where the bot can send messages.
 
 Preserve the `data/` folder when updating deployments and take private SQLite backups when the application is stopped. It stores the core watchlist, proposals, approvals, and cached summaries. Do not launch a second instance sharing the same database state.
 

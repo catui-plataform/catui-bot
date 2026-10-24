@@ -108,6 +108,44 @@ def card(title, body, color=0x5865F2):
     return embed
 
 
+def split_release_announcement(content, limit=1900):
+    if len(content) <= limit:
+        return [content]
+    opening = content.find("```yaml\n")
+    closing = content.find("\n```", opening + 7) if opening >= 0 else -1
+    if opening < 0 or closing < 0:
+        return [content[i:i + limit] for i in range(0, len(content), limit)]
+
+    yaml_body = content[opening + len("```yaml\n"):closing]
+    footer = content[closing + 4:].strip()
+    chunks = []
+    current = []
+    for line in yaml_body.splitlines():
+        candidate = "\n".join(current + [line])
+        if current and len("```yaml\n" + candidate + "\n```") > limit:
+            chunks.append("```yaml\n" + "\n".join(current) + "\n```")
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        chunks.append("```yaml\n" + "\n".join(current) + "\n```")
+
+    if footer:
+        footer_chunks = []
+        current = []
+        for line in footer.splitlines():
+            candidate = "\n".join(current + [line])
+            if current and len(candidate) > limit:
+                footer_chunks.append("\n".join(current))
+                current = [line]
+            else:
+                current.append(line)
+        if current:
+            footer_chunks.append("\n".join(current))
+        chunks.extend(footer_chunks)
+    return chunks
+
+
 def stage_percentage(stage_text):
     text = (stage_text or "").lower()
     if not text:
@@ -723,6 +761,8 @@ class Bot(discord.Client):
         self.discord_io = DiscordIO()
         self.last_chat = 0.0
         self.last_scan = float("-inf")
+        self.last_release_scan = float("-inf")
+        self.release_channel = None
 
     def allowed(self, user, guild, channel):
         return self.private_ready and authorized(user, guild, channel, self.config, self.state)
@@ -1240,6 +1280,19 @@ class Bot(discord.Client):
                 await self.close()
                 return
         self.control_channel = channel
+        try:
+            release_channel = await self.discord_io.call(self.fetch_channel, self.config.release_channel_id)
+            if (not isinstance(release_channel, discord.TextChannel)
+                    or release_channel.guild.id != self.config.guild_id):
+                raise RuntimeError("Configured release destination must be a text channel in the configured server")
+            bot_member = release_channel.guild.me
+            if bot_member is None or not release_channel.permissions_for(bot_member).send_messages:
+                raise RuntimeError("Bot does not have permission to send messages in the release channel")
+            self.release_channel = release_channel
+            log.info("CATui release announcements enabled for channel %s", self.config.release_channel_id)
+        except Exception as exc:
+            self.release_channel = None
+            log.warning("CATui release announcements unavailable: %s", type(exc).__name__)
         owner = await self.discord_io.call(channel.guild.fetch_member, self.config.owner_id)
         if owner.bot or not channel.permissions_for(owner).view_channel:
             log.error("DISCORD_OWNER_ID must identify the human owner with access to the channel")
@@ -1341,6 +1394,65 @@ class Bot(discord.Client):
                 await self.discord_io.call(self.control_channel.send, embed=embed, view=view)
             self.state.update(job["id"], notified=1)
 
+    async def check_catui_releases(self):
+        releases = await self.service.upstream.catui_releases()
+        repository = "catui-plataform/CATui"
+        cursor = self.state.release_announcement_cursor(repository)
+        if cursor is None:
+            if releases:
+                releases.sort(key=lambda release: (release["published_at"], release["id"]))
+                latest = releases[-1]
+                self.state.save_release_announcement_cursor(
+                    repository, latest["id"], latest["published_at"], latest["tag"]
+                )
+                log.info("Initialized CATui release watcher at %s; existing releases will not be reposted", latest["tag"])
+            else:
+                self.state.save_release_announcement_cursor(repository, 0, "", "")
+                log.info("Initialized CATui release watcher with no existing releases")
+            return
+        if not releases:
+            return
+        releases.sort(key=lambda release: (release["published_at"], release["id"]))
+
+        cursor_key = (cursor["published_at"], int(cursor["release_id"]))
+        new_releases = [
+            release for release in releases
+            if (release["published_at"], release["id"]) > cursor_key
+        ]
+        for release in new_releases:
+            if self.release_channel is None:
+                try:
+                    channel = await self.discord_io.call(self.fetch_channel, self.config.release_channel_id)
+                    if not isinstance(channel, discord.TextChannel) or channel.guild.id != self.config.guild_id:
+                        raise RuntimeError("Invalid release channel")
+                    bot_member = channel.guild.me
+                    if bot_member is None or not channel.permissions_for(bot_member).send_messages:
+                        raise RuntimeError("Missing send permission")
+                    self.release_channel = channel
+                except Exception as exc:
+                    log.warning("Could not resolve CATui release channel: %s", type(exc).__name__)
+                    return
+            try:
+                announcement = await self.assistant.format_release(
+                    tag_name=release["tag"],
+                    release_name=release["name"],
+                    release_body=release["body"],
+                    release_url=release["url"],
+                )
+            except Exception:
+                log.exception("Could not format CATui release announcement for %s", release["tag"])
+                return
+            try:
+                for part in split_release_announcement(announcement):
+                    await self.discord_io.call(self.release_channel.send, part)
+            except Exception:
+                log.exception("Could not publish CATui release announcement for %s", release["tag"])
+                return
+            self.state.save_release_announcement_cursor(
+                repository, release["id"], release["published_at"], release["tag"]
+            )
+            log.info("Published CATui release announcement for %s", release["tag"])
+
     @tasks.loop(seconds=10)
     async def monitor(self):
         if not self.discord_io.ready:
@@ -1359,6 +1471,9 @@ class Bot(discord.Client):
                 if report.errors:
                     log.warning("Core checks incomplete: %s", "; ".join(report.errors))
                 await self.send_updates()
+            if time.monotonic() - self.last_release_scan >= 300:
+                self.last_release_scan = time.monotonic()
+                await self.check_catui_releases()
             active = self.state.jobs("running", "uncertain", "dispatching")
             if active or self.state.unnotified():
                 await self.service.reconcile()

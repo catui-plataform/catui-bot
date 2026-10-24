@@ -303,3 +303,29 @@ class Upstream:
             "url": str(data.get("html_url") or ""),
             "published_at": str(data.get("published_at") or "")
         }
+
+    async def catui_releases(self):
+        data = await self.http.json(f"https://api.github.com/repos/{STORE_REPO}/releases?per_page=100")
+        if not isinstance(data, list):
+            raise ValueError("GitHub returned an invalid release list")
+        releases = []
+        for item in data:
+            if not isinstance(item, dict) or item.get("draft") or item.get("prerelease"):
+                continue
+            tag = str(item.get("tag_name") or "")[:100]
+            published_at = str(item.get("published_at") or "")[:40]
+            try:
+                release_id = int(item.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if not tag or not published_at:
+                continue
+            releases.append({
+                "id": release_id,
+                "tag": tag,
+                "name": str(item.get("name") or tag)[:200],
+                "body": str(item.get("body") or "")[:12000],
+                "url": f"https://github.com/{STORE_REPO}/releases/tag/{quote(tag, safe='')}",
+                "published_at": published_at,
+            })
+        return releases

@@ -4,6 +4,8 @@ Private Discord control for CATui emulator updates.
 
 Checks upstream commits against the source bases in the CATui store, shows the latest release when available, and asks for approval before updating a core. Supports PCSX2, Eden, RPCS3, shadPS4, PPSSPP, Cemu and Flycast; comparisons require a saved source baseline.
 
+The bot also checks published CATui releases every five minutes and posts new release notes to the configured announcement channel. It formats the official GitHub release body, keeps links outside the YAML block, and stores a cursor so restarts do not repost releases. On the first startup with an empty state database, the current latest release is recorded as the baseline.
+
 - `/cores-panel` - choose which cores to monitor.
 - `/cores-check` - check commits and review available updates.
 - `/chat` - talk to the CATui assistant.
