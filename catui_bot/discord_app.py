@@ -146,6 +146,28 @@ def split_release_announcement(content, limit=1900):
     return chunks
 
 
+async def send_release_announcement(channel, discord_io, content):
+    if len(content) <= 1950:
+        await discord_io.call(channel.send, content)
+        return
+    if len(content) <= 4096:
+        embed = discord.Embed(description=content, color=0x5865F2)
+        await discord_io.call(channel.send, embed=embed)
+        return
+
+    embed_parts = split_release_announcement(content, limit=3800)
+    if len(embed_parts) <= 10 and sum(map(len, embed_parts)) <= 6000:
+        embeds = [discord.Embed(description=part, color=0x5865F2) for part in embed_parts]
+        await discord_io.call(channel.send, embeds=embeds)
+        return
+
+    # Discord caps ordinary message content at 2,000 characters and all embeds
+    # on one message at 6,000 characters, so only exceptionally long notes need
+    # multiple messages to preserve every detail.
+    for part in split_release_announcement(content):
+        await discord_io.call(channel.send, part)
+
+
 def stage_percentage(stage_text):
     text = (stage_text or "").lower()
     if not text:
@@ -1443,8 +1465,7 @@ class Bot(discord.Client):
                 log.exception("Could not format CATui release announcement for %s", release["tag"])
                 return
             try:
-                for part in split_release_announcement(announcement):
-                    await self.discord_io.call(self.release_channel.send, part)
+                await send_release_announcement(self.release_channel, self.discord_io, announcement)
             except Exception:
                 log.exception("Could not publish CATui release announcement for %s", release["tag"])
                 return
