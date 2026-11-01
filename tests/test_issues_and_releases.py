@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 import discord
 
 from catui_bot.config import Config, DEFAULT_ISSUES_CHANNEL_ID, DEFAULT_ISSUES_REPO
-from catui_bot.llm import Assistant, strip_emojis, sanitize_labels
+from catui_bot.llm import Assistant, strip_emojis, sanitize_labels, normalize_release_announcement
 from catui_bot.upstream import Upstream
 from catui_bot.service import Service
 from catui_bot.state import State
@@ -155,6 +155,9 @@ Website: https://catui.xyz/"""
         self.assertIn("# RELEASE INFO", formatted)
         self.assertIn("Build ZERO is currently exclusive to Windows for closed testing.", formatted)
         self.assertIn("```", formatted)
+        self.assertNotIn("Links:", formatted)
+        self.assertNotIn("**Links:**", formatted)
+        self.assertEqual(formatted.count("https://catui.xyz/"), 1)
         self.assertIn("**Website:** https://catui.xyz/", formatted)
         self.assertIn("**Release:** https://github.com/catui-plataform/CATui/releases/tag/build-zero(0.1.1)", formatted)
 
@@ -210,11 +213,55 @@ Website: https://catui.xyz/
             "**Credits:**\nhttps://github.com/RebeccaRGB/keyboards\nhttps://github.com/AL2009man/Gamepad-Asset-Pack",
             formatted
         )
+        self.assertNotIn("Links:", formatted)
+        self.assertNotIn("**Links:**", formatted)
+        self.assertEqual(formatted.count("https://catui.xyz/"), 1)
         self.assertIn("**Website:** https://catui.xyz/", formatted)
         self.assertIn("**Release:** https://github.com/catui-plataform/CATui/releases/tag/v0.1.1", formatted)
         # Verify no images or emojis
         self.assertNotIn("<img", formatted)
         self.assertNotIn("user-attachments", formatted)
+
+    def test_normalize_release_announcement_removes_redundant_links_and_duplicate_website(self):
+        raw = """```yaml
+# CATUI | BUILD ZERO (0.3.0)
+
+A new update for CATui Build ZERO is here.
+
+# WHAT'S NEW
+- General: Bug fixes and improvements;
+```
+Links:
+https://catui.xyz/
+
+Website: https://catui.xyz/
+Release: https://github.com/catui-plataform/CATui/releases/tag/build-zero(0.3.0)"""
+
+        normalized = normalize_release_announcement(raw)
+        self.assertNotIn("Links:", normalized)
+        self.assertNotIn("**Links:**", normalized)
+        self.assertEqual(normalized.count("https://catui.xyz/"), 1)
+        self.assertIn("**Website:** https://catui.xyz/", normalized)
+        self.assertIn("**Release:** https://github.com/catui-plataform/CATui/releases/tag/build-zero(0.3.0)", normalized)
+
+    def test_normalize_release_announcement_with_markdown_links_in_yaml(self):
+        raw = """```yaml
+# CATUI | BUILD ZERO (0.3.0)
+
+Check our [Website](https://catui.xyz/) and [Guide](https://wiki.example.com/guide).
+```
+**Website:** https://catui.xyz/
+**Release:** https://github.com/catui-plataform/CATui/releases/tag/build-zero(0.3.0)"""
+
+        normalized = normalize_release_announcement(raw)
+        self.assertNotIn("[Website]", normalized)
+        self.assertNotIn("[Guide]", normalized)
+        self.assertNotIn("Links:", normalized)
+        self.assertNotIn("**Links:**", normalized)
+        self.assertEqual(normalized.count("https://catui.xyz/"), 1)
+        self.assertIn("https://wiki.example.com/guide", normalized)
+        self.assertIn("**Website:** https://catui.xyz/", normalized)
+        self.assertIn("**Release:** https://github.com/catui-plataform/CATui/releases/tag/build-zero(0.3.0)", normalized)
 
 
 class IssueAndReleaseAsyncTests(unittest.IsolatedAsyncioTestCase):

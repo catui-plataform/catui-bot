@@ -42,7 +42,7 @@ def strip_emojis(text):
 
 def normalize_release_announcement(content):
     """Keep release links clickable and space top-level What's New entries."""
-    content = strip_emojis(content)
+    content = strip_emojis(content or "").strip()
     opening = content.find("```yaml")
     if opening < 0:
         return content
@@ -57,7 +57,7 @@ def normalize_release_announcement(content):
     external_urls = []
 
     def remember_url(url):
-        cleaned = url.rstrip(".,;:")
+        cleaned = url.rstrip("*.,;:")
         if cleaned and cleaned not in external_urls:
             external_urls.append(cleaned)
         return cleaned
@@ -90,11 +90,86 @@ def normalize_release_announcement(content):
             previous_nonempty = line.strip()
 
     yaml_text = "```yaml\n" + "\n".join(spaced_lines).strip() + "\n```"
-    footer = content[closing + 3:].strip()
-    if external_urls:
-        links = "**Links:**\n" + "\n".join(external_urls)
-        footer = links + ("\n\n" + footer if footer else "")
-    return yaml_text + ("\n" + footer if footer else "")
+    raw_footer = content[closing + 3:].strip()
+
+    credit_urls = []
+    other_urls = []
+    website_url = None
+    release_url = None
+    in_credits = False
+
+    for line in raw_footer.splitlines():
+        trimmed = line.strip()
+        if not trimmed:
+            continue
+        lower = trimmed.lower()
+        if re.match(r"^\*{0,2}credits:\*{0,2}$", lower):
+            in_credits = True
+            continue
+        if re.match(r"^\*{0,2}links:\*{0,2}$", lower):
+            in_credits = False
+            continue
+
+        m_web = re.match(r"^\*{0,2}website:\*{0,2}\s*(https?://\S+)", trimmed, re.IGNORECASE)
+        if m_web:
+            in_credits = False
+            website_url = m_web.group(1).rstrip("*.,;:")
+            continue
+
+        m_rel = re.match(r"^\*{0,2}release:\*{0,2}\s*(https?://\S+)", trimmed, re.IGNORECASE)
+        if m_rel:
+            in_credits = False
+            release_url = m_rel.group(1).rstrip("*.,;:")
+            continue
+
+        found_urls = re.findall(r"https?://\S+", trimmed)
+        if in_credits:
+            for u in found_urls:
+                u_clean = u.rstrip("*.,;:")
+                if "catui.xyz" not in u_clean and u_clean not in credit_urls:
+                    credit_urls.append(u_clean)
+        else:
+            for u in found_urls:
+                u_clean = u.rstrip("*.,;:")
+                if "catui.xyz" in u_clean:
+                    if not website_url:
+                        website_url = u_clean
+                elif release_url and u_clean == release_url:
+                    continue
+                elif u_clean not in other_urls and u_clean not in credit_urls:
+                    other_urls.append(u_clean)
+
+    for u in external_urls:
+        if "catui.xyz" in u:
+            if not website_url:
+                website_url = u
+            continue
+        if release_url and u == release_url:
+            continue
+        if u not in credit_urls and u not in other_urls:
+            other_urls.append(u)
+
+    footer_parts = []
+    if credit_urls:
+        footer_parts.append("**Credits:**\n" + "\n".join(credit_urls) + "\n")
+    if other_urls:
+        footer_parts.append("\n".join(other_urls) + "\n")
+
+    link_lines = []
+    if website_url:
+        link_lines.append(f"**Website:** {website_url}")
+    elif "catui.xyz" in raw_footer or "https://catui.xyz/" in content:
+        link_lines.append("**Website:** https://catui.xyz/")
+    if release_url:
+        link_lines.append(f"**Release:** {release_url}")
+
+    if link_lines:
+        footer_parts.append("\n".join(link_lines))
+
+    if not footer_parts:
+        return yaml_text
+
+    return yaml_text + "\n" + "\n".join(footer_parts)
 
 
 CANONICAL_LABELS = ("catui", "core", "cores", "seamless", "compat", "bug", "enhancement")
@@ -685,13 +760,16 @@ class Assistant:
             "   - If other technical or status sections exist (e.g. RetroAchievements Status, Release Info), include them as uppercase headers (e.g. # RETROACHIEVEMENTS STATUS, # RELEASE INFO) with their full text.\n"
             "   Close the ``` code block.\n"
             "6. Outside the ``` code block:\n"
-            "   - No URL may appear inside the YAML block. Put every URL found in the release notes outside the block as a bare clickable URL under **Links:**, one per line.\n"
+            "   - No URL may appear inside the YAML block. Keep all URLs outside the block.\n"
             "   - If there are asset/project credits in the release notes, output:\n"
             "     **Credits:**\n"
             "     Followed by each credit URL on its own line directly below it (no names, categories, or bullet marks, just the bare URL on each line).\n"
             "     Then a blank line.\n"
-            "   - **Website:** https://catui.xyz/\n"
-            "   - **Release:** " + target_url + "\n"
+            "   - Put any other external URLs found in the release notes as bare clickable URLs, one per line (do NOT repeat https://catui.xyz/ or the release URL).\n"
+            "   - End with:\n"
+            "     **Website:** https://catui.xyz/\n"
+            "     **Release:** " + target_url + "\n"
+            "   - Do NOT output a Links: heading or repeat the website URL.\n"
             "7. Output ONLY the formatted markdown text starting with ```yaml. No conversational commentary."
         )
         payload_data = {
@@ -758,8 +836,8 @@ class Assistant:
             # Keep authored website/download links outside the YAML block.
             if line.lower().startswith("website:") or line.lower().startswith("download:"):
                 for url in re.findall(r"https?://[^\s\)\>]+", line):
-                    cleaned_url = url.rstrip(".,;")
-                    if cleaned_url and cleaned_url not in release_urls:
+                    cleaned_url = url.rstrip("*.,;:")
+                    if cleaned_url and "catui.xyz" not in cleaned_url and cleaned_url != target_url and cleaned_url not in release_urls:
                         release_urls.append(cleaned_url)
                 continue
 
@@ -825,7 +903,7 @@ class Assistant:
         if credit_urls:
             footer_parts.append("**Credits:**\n" + "\n".join(credit_urls) + "\n")
         if release_urls:
-            footer_parts.append("**Links:**\n" + "\n".join(release_urls))
+            footer_parts.append("\n".join(release_urls) + "\n")
         footer_parts.append(f"**Website:** https://catui.xyz/\n**Release:** {target_url}")
 
         return yaml_block + "\n" + "\n".join(footer_parts)
